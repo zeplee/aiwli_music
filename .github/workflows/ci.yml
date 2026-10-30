@@ -1,0 +1,440 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  dart:
+    name: Dart analyze + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # NOTE: no `dart format --set-exit-if-changed` gate. The repo is formatted
+      # with an older Dart style; the stable formatter (tall style) would reject
+      # files and fail this job and every build job below (they all `needs:
+      # [dart]`). analyze --fatal-infos + test are the gates.
+      - run: flutter analyze --fatal-infos
+      - run: flutter test --no-pub
+
+  apk:
+    name: Android APKs (split per ABI)
+    runs-on: ubuntu-latest
+    needs: [dart]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      # No release keystore in CI (key.properties is gitignored) → debug-signed
+      # artifact for verification, not for distribution.
+      - name: Build APKs (split per ABI)
+        run: |
+          flutter pub get
+          flutter build apk --release --split-per-abi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiwli-music-apk
+          path: build/app/outputs/flutter-apk/app-*-release.apk
+
+  linux:
+    name: Build Linux (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: [dart]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-latest
+            debarch: amd64
+            rpmarch: x86_64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            debarch: arm64
+            rpmarch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+      # x64: official SDK archive via flutter-action. arm64: Flutter publishes
+      # NO linux-arm64 SDK archive (releases_linux.json has zero arm64 entries,
+      # verified 2026-10-14 in aiwli_git) → bootstrap from the git tag; the
+      # flutter tool self-hosts on arm64 via the published arm64 dart-sdk.
+      - uses: subosito/flutter-action@v2
+        if: matrix.arch == 'x64'
+        with:
+          channel: stable
+          cache: true
+      - name: Install Flutter (arm64, git bootstrap)
+        if: matrix.arch == 'arm64'
+        run: |
+          git clone --depth 1 --branch 3.47.1 \
+            https://github.com/flutter/flutter.git "$HOME/flutter-sdk"
+          echo "$HOME/flutter-sdk/bin" >> "$GITHUB_PATH"
+      - name: Install Linux desktop dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev ninja-build
+      - name: Build
+        run: |
+          flutter pub get
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
+          flutter build linux --release --build-name="$V"
+      - name: Package
+        run: tar -czf aiwli-music-linux-${{ matrix.arch }}.tar.gz -C build/linux/${{ matrix.arch }}/release/bundle .
+      - name: Package deb
+        run: |
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
+          mkdir -p deb/DEBIAN deb/opt/aiwli-music deb/usr/bin \
+            deb/usr/share/applications deb/usr/share/icons/hicolor/256x256/apps
+          cp -r build/linux/${{ matrix.arch }}/release/bundle/* deb/opt/aiwli-music/
+          ln -s /opt/aiwli-music/aiwli_music deb/usr/bin/aiwli-music
+          cp macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_256.png \
+            deb/usr/share/icons/hicolor/256x256/apps/aiwli-music.png
+          cat > deb/usr/share/applications/aiwli-music.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=AiwliMusic
+          Exec=/opt/aiwli-music/aiwli_music
+          Icon=aiwli-music
+          Categories=AudioVideo;Audio;
+          EOF
+          cat > deb/DEBIAN/control <<EOF
+          Package: aiwli-music
+          Version: ${V}
+          Section: sound
+          Priority: optional
+          Architecture: ${{ matrix.debarch }}
+          Maintainer: zeplee <zeplee@users.noreply.github.com>
+          Depends: libgtk-3-0, libstdc++6, libglu1-mesa, libglib2.0-0, libblkid1, liblzma5
+          Description: Aiwli Music - cross-platform music player (Flutter)
+          EOF
+          dpkg-deb --build --root-owner-group deb aiwli-music-linux-${{ matrix.arch }}.deb
+      - name: Package rpm
+        run: |
+          set -x
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
+          # ruby-dev/build-essential：fpm 依赖链里的原生扩展需要编译头文件
+          sudo apt-get install -y ruby ruby-dev build-essential >/dev/null
+          sudo gem install fpm --no-document
+          export PATH="$(ruby -e 'puts Gem.bindir'):$PATH"
+          # deb 已在此步之前构建完成；fpm 对 dir 输入里的绝对符号链接处理不稳，
+          # 先移除 /usr/bin 链接，改用 after-install 脚本在装机时重建。
+          # fpm 的 --after-install 要脚本文件路径（内联命令会被当文件读）。
+          rm -f deb/usr/bin/aiwli-music
+          printf '#!/bin/sh\nln -sf /opt/aiwli-music/aiwli_music /usr/bin/aiwli-music\n' \
+            > /tmp/aiwli-after-install.sh
+          fpm -s dir -t rpm -n aiwli-music -v "${V}" -a ${{ matrix.rpmarch }} \
+            --depends gtk3 \
+            --description "Aiwli Music - cross-platform music player (Flutter)" \
+            --after-install /tmp/aiwli-after-install.sh \
+            -C deb opt usr
+          mv -f aiwli-music-*.rpm "aiwli-music-linux-${{ matrix.arch }}.rpm"
+          ls -la aiwli-music-linux-${{ matrix.arch }}.rpm
+      - name: Package AppImage
+        if: matrix.arch == 'x64'
+        run: |
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
+          bash tool/build_appimage.sh build/linux/x64/release/bundle "$V" aiwli-music-linux
+      - name: Dump build logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          (find build -type f \( -name '*.log' -o -name 'stderr*' -o -name 'stdout*' \) -size +0c 2>/dev/null | head -10 | while read -r f; do
+            echo "=== $f ==="; tail -30 "$f" 2>/dev/null
+          done) || true
+          echo "=== disk space ==="; df -h /d 2>/dev/null || true
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-linux
+          path: |
+            build/**/*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiwli-music-linux-${{ matrix.arch }}
+          path: |
+            aiwli-music-linux-${{ matrix.arch }}.tar.gz
+            aiwli-music-linux-${{ matrix.arch }}.deb
+            aiwli-music-linux-${{ matrix.arch }}.rpm
+            aiwli-music-linux-x86_64.AppImage
+
+  windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    needs: [dart]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.0.0' }
+          flutter pub get
+          flutter build windows --release --build-name="$v"
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath aiwli-music-windows-x64.zip
+      - name: Package installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_NAME -like 'v*') { $env:GITHUB_REF_NAME.Substring(1) } else { '0.0.0' }
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAPP_VERSION=$v `
+            /DSourcePath="$PWD\build\windows\x64\runner\Release" windows/setup.iss
+          # Inno 的 OutputDir 相对于 .iss 所在目录（windows/），归位到工作区根
+          $exe = Get-ChildItem -Recurse -Filter "aiwli-music-windows-setup.exe" |
+            Select-Object -First 1
+          if ($exe) { Move-Item $exe.FullName ".\aiwli-music-windows-setup.exe" -Force }
+          else { Write-Error "setup.exe not found after ISCC"; exit 1 }
+      - name: Dump build logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          (find build -type f \( -name '*.log' -o -name 'stderr*' -o -name 'stdout*' \) -size +0c 2>/dev/null | head -10 | while read -r f; do
+            echo "=== $f ==="; tail -30 "$f" 2>/dev/null
+          done) || true
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-windows
+          path: |
+            build/**/*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiwli-music-windows
+          path: |
+            aiwli-music-windows-x64.zip
+            aiwli-music-windows-setup.exe
+
+  # macOS/iOS runner 按 10 倍计费（私有仓库），只在发版时构建
+  macos:
+    name: Build macOS (universal)
+    runs-on: macos-latest
+    needs: [dart]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      # 实测（aiwli_git run 38504151773）：flutter build macos --release 默认
+      # ARCHS_STANDARD 产出已含双架构的 universal 二进制，故先验证再决定合并。
+      - name: Build (native)
+        run: |
+          flutter pub get
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
+          flutter build macos --release --build-name="$V"
+      - name: Ensure universal binary
+        run: |
+          APP=$(ls -d build/macos/Build/Products/Release/*.app | head -1)
+          BIN="$APP/Contents/MacOS/$(ls "$APP/Contents/MacOS" | head -1)"
+          ARCHS=$(lipo -info "$BIN" | sed 's/^.*: //')
+          echo "native build architectures: $ARCHS"
+          case "$ARCHS" in
+            *arm64*x86_64*|*x86_64*arm64*)
+              echo "默认构建已是 universal，无需合并" ;;
+            *arm64*)
+              echo "仅 arm64 → 双构建合并出 x86_64 切片（arch -x86_64 让 flutter 按 x64 主机自举，走 Rosetta）"
+              rm -rf /tmp/app-arm64 /tmp/app-x64 /tmp/uni.app
+              cp -R "$APP" /tmp/app-arm64
+              softwareupdate --install-rosetta --agree-to-license >/dev/null 2>&1 || true
+              arch -x86_64 flutter build macos --release
+              APP2=$(ls -d build/macos/Build/Products/Release/*.app | head -1)
+              cp -R "$APP2" /tmp/app-x64
+              cp -R /tmp/app-arm64 /tmp/uni.app
+              (cd /tmp/app-arm64 && find . -type f | while IFS= read -r f; do
+                 rel="${f#./}"
+                 if file "$f" | grep -q Mach-O && [ -f "/tmp/app-x64/$rel" ]; then printf '%s\n' "$rel"; fi
+               done) > /tmp/merge-list
+              while IFS= read -r f; do
+                lipo -create "/tmp/app-arm64/$f" "/tmp/app-x64/$f" -output "/tmp/uni.app/$f"
+              done < /tmp/merge-list
+              echo "merged: $(wc -l < /tmp/merge-list) Mach-O files"
+              codesign --force --deep -s - /tmp/uni.app
+              rm -rf "$APP" && cp -R /tmp/uni.app "$APP" ;;
+            *) echo "::error::意外的架构组合: $ARCHS"; exit 1 ;;
+          esac
+          echo "final: $(lipo -info "$BIN")"
+      - name: Package
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r -q -y aiwli-music-macos-universal.zip *.app
+          # dmg：mac 标准分发格式（UDZO 压缩，打开即见 .app 拖拽安装）
+          APP=$(ls -d *.app | head -1)
+          hdiutil create -volname "AiwliMusic" -srcfolder "$APP" -ov -format UDZO \
+            aiwli-music-macos-universal.dmg
+      - name: Dump build logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          (find build -type f \( -name '*.log' -o -name 'stderr*' \) -size +0c 2>/dev/null | head -10 | while read -r f; do
+            echo "=== $f ==="; tail -30 "$f" 2>/dev/null
+          done) || true
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-macos
+          path: |
+            build/**/*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiwli-music-macos
+          path: |
+            build/macos/Build/Products/Release/aiwli-music-macos-universal.zip
+            build/macos/Build/Products/Release/aiwli-music-macos-universal.dmg
+
+  ios:
+    name: Build iOS (arm64, unsigned)
+    runs-on: macos-latest
+    needs: [dart]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build (unsigned)
+        run: |
+          # 显式走 CocoaPods 集成，避免 flutter 3.47 默认 SPM 找不到 Package.swift
+          flutter config --no-enable-swift-package-manager
+          flutter pub get
+          V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
+          flutter build ios --release --no-codesign --build-name="$V"
+      - name: Package unsigned ipa
+        run: |
+          mkdir Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -q -y -r aiwli-music-ios-arm64.ipa Payload
+          mkdir -p build/ios/dist
+          mv aiwli-music-ios-arm64.ipa build/ios/dist/
+      - name: Dump build logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          (find build -type f \( -name '*.log' -o -name 'stderr*' \) -size +0c 2>/dev/null | head -10 | while read -r f; do
+            echo "=== $f ==="; tail -30 "$f" 2>/dev/null
+          done) || true
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-ios
+          path: |
+            build/**/*.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aiwli-music-ios
+          path: build/ios/dist/aiwli-music-ios-arm64.ipa
+
+  # Reports every job's outcome so the result is readable from the run page.
+  report:
+    name: CI status report
+    needs: [dart, apk, linux, windows, macos, ios]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          R_DART: ${{ needs.dart.result }}
+          R_APK: ${{ needs.apk.result }}
+          R_LINUX: ${{ needs.linux.result }}
+          R_WINDOWS: ${{ needs.windows.result }}
+          R_MACOS: ${{ needs.macos.result }}
+          R_IOS: ${{ needs.ios.result }}
+        run: |
+          {
+            echo "# CI status — run $RUN_ID"
+            echo
+            echo "commit: ${{ github.sha }}"
+            echo "time: $(date -u '+%Y-%m-%d %H:%M UTC')"
+            echo
+            echo "- dart analyze+test: $R_DART"
+            echo "- android apks (split per abi): $R_APK"
+            echo "- linux x64: $R_LINUX"
+            echo "- windows x64: $R_WINDOWS"
+            echo "- macos universal: $R_MACOS"
+            echo "- ios arm64 (unsigned): $R_IOS"
+            echo
+            echo "run: https://github.com/$REPO/actions/runs/$RUN_ID"
+          } > CI_STATUS.md
+          cat CI_STATUS.md
+      - name: Upload status report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-status-report
+          path: CI_STATUS.md
+          if-no-files-found: ignore
+
+  # tag 推送（v*）时：把各平台产物挂到 GitHub Release。
+  # 平台 job 依赖 dart 门，门挂了它们 skip，本 job 的 needs 也随之 skip。
+  release:
+    name: Publish to GitHub Releases
+    runs-on: ubuntu-latest
+    needs: [apk, linux, windows, macos, ios]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: 'aiwli-music-*'
+          merge-multiple: true
+          path: dist
+      - name: Rename assets with version
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          cd dist
+          for f in *; do
+            case "$f" in
+              app-arm64-v8a-release.apk)            mv "$f" "aiwli-music-${V}-android-arm64.apk" ;;
+              app-armeabi-v7a-release.apk)          mv "$f" "aiwli-music-${V}-android-armv7.apk" ;;
+              app-x86_64-release.apk)               mv "$f" "aiwli-music-${V}-android-x86_64.apk" ;;
+              aiwli-music-linux-x64.tar.gz)         mv "$f" "aiwli-music-${V}-linux-x64.tar.gz" ;;
+              aiwli-music-linux-x64.deb)            mv "$f" "aiwli-music-${V}-linux-x64.deb" ;;
+              aiwli-music-linux-x64.rpm)            mv "$f" "aiwli-music-${V}-linux-x64.rpm" ;;
+              aiwli-music-linux-arm64.tar.gz)       mv "$f" "aiwli-music-${V}-linux-arm64.tar.gz" ;;
+              aiwli-music-linux-arm64.deb)          mv "$f" "aiwli-music-${V}-linux-arm64.deb" ;;
+              aiwli-music-linux-arm64.rpm)          mv "$f" "aiwli-music-${V}-linux-arm64.rpm" ;;
+              aiwli-music-linux-x86_64.AppImage)    mv "$f" "aiwli-music-${V}-linux-x64.AppImage" ;;
+              aiwli-music-windows-x64.zip)          mv "$f" "aiwli-music-${V}-windows-x64.zip" ;;
+              aiwli-music-windows-setup.exe)        mv "$f" "aiwli-music-${V}-windows-setup.exe" ;;
+              aiwli-music-macos-universal.zip)      mv "$f" "aiwli-music-${V}-macos-universal.zip" ;;
+              aiwli-music-macos-universal.dmg)      mv "$f" "aiwli-music-${V}-macos-universal.dmg" ;;
+              aiwli-music-ios-arm64.ipa)            mv "$f" "aiwli-music-${V}-ios-arm64.ipa" ;;
+            esac
+          done
+          ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
