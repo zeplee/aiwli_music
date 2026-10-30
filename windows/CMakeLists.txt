@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.14)
 project(aiwli_music LANGUAGES CXX)
 
+# MSVC 18 (VS 2026) 将 experimental/coroutine 硬化为错误（STL1011）。
+# permission_handler_windows 0.2.2（经 flutter_media_store 传递引入）尚未迁移
+# C++20 <coroutine>，按微软官方豁免宏压制；插件目标在本目录作用域内创建。
+add_compile_definitions(_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "aiwli_music")

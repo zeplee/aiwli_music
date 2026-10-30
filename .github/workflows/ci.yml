@@ -84,7 +84,8 @@ jobs:
             https://github.com/flutter/flutter.git "$HOME/flutter-sdk"
           echo "$HOME/flutter-sdk/bin" >> "$GITHUB_PATH"
       - name: Install Linux desktop dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev ninja-build
+        # libsecret-1-dev/libjsoncpp-dev: flutter_secure_storage_linux（直接依赖）的 pkg-config 要求
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev ninja-build libsecret-1-dev libjsoncpp-dev
       - name: Build
         run: |
           flutter pub get
@@ -116,7 +117,7 @@ jobs:
           Priority: optional
           Architecture: ${{ matrix.debarch }}
           Maintainer: zeplee <zeplee@users.noreply.github.com>
-          Depends: libgtk-3-0, libstdc++6, libglu1-mesa, libglib2.0-0, libblkid1, liblzma5
+          Depends: libgtk-3-0, libstdc++6, libglu1-mesa, libglib2.0-0, libblkid1, liblzma5, libsecret-1-0
           Description: Aiwli Music - cross-platform music player (Flutter)
           EOF
           dpkg-deb --build --root-owner-group deb aiwli-music-linux-${{ matrix.arch }}.deb
