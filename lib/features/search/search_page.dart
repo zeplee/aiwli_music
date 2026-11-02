@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -8,6 +9,7 @@ import '../../../core/models/music.dart';
 import '../../../core/models/quality.dart';
 import '../../../player/player_core.dart';
 import '../../../sources/builtin/builtin_search.dart';
+import '../../../sources/registry.dart';
 import '../player/player_page.dart';
 
 /// 搜索页：五平台并发聚合（酷我/QQ/网易/酷狗/咪咕）+ 脚本源补充。
@@ -34,6 +36,40 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
   TabController? _tabs;
 
+  /// 每个源分组的滚动控制器（用于滚到底自动加载下一页）。
+  final Map<String, ScrollController> _scrollCtrls = {};
+
+  ScrollController _ctrlFor(String key) => _scrollCtrls.putIfAbsent(key, () {
+        final c = ScrollController();
+        c.addListener(() => _maybeLoadMore(key));
+        return c;
+      });
+
+  /// 滚动到接近底部时加载该源下一页。
+  void _maybeLoadMore(String sourceId) {
+    final c = _scrollCtrls[sourceId];
+    if (c == null || !c.hasClients) return;
+    if (c.position.maxScrollExtent - c.position.pixels > 320) return;
+
+    final idx = _groups.indexWhere((g) => g.sourceId == sourceId);
+    if (idx < 0) return;
+    final g = _groups[idx];
+    if (!g.canLoadMore) return;
+
+    unawaited(_loadMore(idx));
+  }
+
+  Future<void> _loadMore(int idx) async {
+    if (idx < 0 || idx >= _groups.length) return;
+    final g = _groups[idx];
+    if (!g.canLoadMore) return;
+
+    setState(() => g.loadingMore = true);
+    await BuiltinSearch.loadMore(g);
+    if (!mounted) return;
+    setState(() => g.loadingMore = false);
+  }
+
   void _onTabChanged() {
     final i = _tabs?.index ?? 0;
     if (i != _tabIndex && mounted) setState(() => _tabIndex = i);
@@ -42,6 +78,9 @@ class _SearchPageState extends ConsumerState<SearchPage>
   @override
   void dispose() {
     _tabs?.removeListener(_onTabChanged);
+    for (final c in _scrollCtrls.values) {
+      c.dispose();
+    }
     _controller.dispose();
     _tabs?.dispose();
     super.dispose();
@@ -163,8 +202,17 @@ class _SearchPageState extends ConsumerState<SearchPage>
     final scheme = Theme.of(context).colorScheme;
     final registry = ref.watch(sourceRegistryProvider);
 
-    // TabController 只在「分组数量」变化时重建；长度不变则复用，
-    // 否则每次 setState 都会换掉 controller 导致点击丢失。
+    // 官方机制：MediaQuery.gestureSettings 会被 Scrollable 读取并注入拖拽识别器。
+    // 把 touchSlop 抬到 40（默认约 18），斜向/快速纵向滚动时横向手势更难抢先。
+    return MediaQuery(
+      data: MediaQuery.of(context).copyWith(
+        gestureSettings: const DeviceGestureSettings(touchSlop: 40),
+      ),
+      child: _buildScaffold(scheme, registry),
+    );
+  }
+
+  Widget _buildScaffold(ColorScheme scheme, SourceRegistry registry) {
     final tabCount = 1 + _groups.length;
     if (_tabs == null || _tabs!.length != tabCount) {
       final old = _tabs;
@@ -291,8 +339,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
   Widget _buildGroupTab(SourceGroup g, ColorScheme scheme) {
     if (g.state == SourceSearchState.failed) {
-      return _emptyHint(
-          '该源搜索失败\n${g.error ?? "未知错误"}', scheme,
+      return _emptyHint('该源搜索失败\n${g.error ?? "未知错误"}', scheme,
           icon: Icons.error_outline);
     }
     if (!g.hasResults) {
@@ -300,14 +347,51 @@ class _SearchPageState extends ConsumerState<SearchPage>
           g.state == SourceSearchState.pending;
       return _emptyHint(waiting ? '搜索中…' : '该源无结果', scheme);
     }
+    final showFooter = !g.isScript;
     return ListView.builder(
-      itemCount: g.songs.length,
-      itemBuilder: (context, i) => _songTile(
-        g.songs[i],
-        scheme,
-        onTap: () => _playAll(g.songs, i),
-      ),
+      controller: _ctrlFor(g.sourceId),
+      itemCount: g.songs.length + (showFooter ? 1 : 0),
+      itemBuilder: (context, i) {
+        if (showFooter && i == g.songs.length) return _listFooter(g, scheme);
+        return _songTile(
+          g.songs[i],
+          scheme,
+          onTap: () => _playAll(g.songs, i),
+        );
+      },
     );
+  }
+
+  Widget _listFooter(SourceGroup g, ColorScheme scheme) {
+    final Widget child;
+    if (g.loadingMore) {
+      child = const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2)),
+        SizedBox(width: 8),
+        Text('加载中…', style: TextStyle(fontSize: 12)),
+      ]);
+    } else if (g.canLoadMore) {
+      child = TextButton(
+        onPressed: () => unawaited(_loadMoreById(g.sourceId)),
+        child: const Text('加载更多', style: TextStyle(fontSize: 13)),
+      );
+    } else {
+      child = Text('— 已全部加载 ${g.count} 首 —',
+          style: TextStyle(fontSize: 11, color: scheme.outline));
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Center(child: child),
+    );
+  }
+
+  Future<void> _loadMoreById(String sourceId) async {
+    final idx = _groups.indexWhere((g) => g.sourceId == sourceId);
+    if (idx < 0) return;
+    await _loadMore(idx);
   }
 
   Widget _emptyHint(String text, ColorScheme scheme,

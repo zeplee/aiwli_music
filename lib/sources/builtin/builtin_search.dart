@@ -19,25 +19,60 @@ class SourceGroup {
     this.state = SourceSearchState.pending,
     List<MusicInfo>? songs,
     this.error,
+    this.page = 1,
+    this.hasMore = true,
+    this.loadingMore = false,
+    this.keyword = '',
   }) : songs = songs ?? <MusicInfo>[];
 
   final String sourceId;
-  final String label; // 展示名（酷我 / QQ音乐 / 网易云）
+  final String label; // 展示名（酷我 / QQ音乐 / 网易云 / 酷狗 / 咪咕）
   SourceSearchState state;
   List<MusicInfo> songs;
   String? error;
 
+  /// 已加载到的页码（下一页 = page + 1）。
+  int page;
+
+  /// 是否还有下一页（返回空或不足一页即认为到底）。
+  bool hasMore;
+
+  /// 正在加载下一页。
+  bool loadingMore;
+
+  /// 该分组对应的关键词（加载更多时复用）。
+  String keyword;
+
   bool get hasResults => songs.isNotEmpty;
   int get count => songs.length;
+
+  /// 脚本源一次给全，不参与分页。
+  bool get isScript => sourceId.startsWith('script:');
+
+  /// 是否还能继续加载。
+  bool get canLoadMore =>
+      hasMore && !loadingMore && state == SourceSearchState.done && !isScript;
+
+  SourceGroup copy() => SourceGroup(
+        sourceId: sourceId,
+        label: label,
+        state: state,
+        songs: List.of(songs),
+        error: error,
+        page: page,
+        hasMore: hasMore,
+        loadingMore: loadingMore,
+        keyword: keyword,
+      );
 }
 
 /// 内置平台聚合搜索。
 ///
-/// 与 lx-music / 同类实现一致的策略：
+/// 策略（对齐参考实现并做移动端优化）：
 ///  - 全部平台**并发**请求，谁先返回先展示（渐进式）
 ///  - **单源失败不影响其他源**（各自记录 error）
-///  - 结果**按源分组**（比单列表更利于跨源对比音质）
-///  - 组内按关键词相似度排序
+///  - 结果**按源分组**（便于跨源对比音质）
+///  - 每组独立**分页**：滚到底加载下一页（见 [loadMore]）
 class BuiltinSearch {
   BuiltinSearch._();
 
@@ -52,14 +87,14 @@ class BuiltinSearch {
 
   static const order = ['kw', 'tx', 'wy', 'kg', 'mg'];
 
+  /// 每页条数（与各平台接口默认一致）。
+  static const pageSize = 30;
+
   /// 并发搜索，逐源回调（用于渐进式 UI）。
-  ///
-  /// [onGroup] 每完成一个源就回调一次，传当前全部分组快照。
-  /// 返回最终分组列表。
   static Future<List<SourceGroup>> searchAll(
     String keyword, {
     int page = 1,
-    int limit = 30,
+    int limit = pageSize,
     Set<String>? enabled,
     void Function(List<SourceGroup> groups)? onGroup,
     Duration timeout = const Duration(seconds: 20),
@@ -68,28 +103,21 @@ class BuiltinSearch {
     final groups = <SourceGroup>[
       for (final id in order)
         if (enabled == null || enabled.contains(id))
-          SourceGroup(sourceId: id, label: labels[id] ?? id),
+          SourceGroup(sourceId: id, label: labels[id] ?? id, keyword: kw),
     ];
     if (kw.isEmpty || groups.isEmpty) return groups;
 
-    void emit() => onGroup?.call([
-          for (final g in groups)
-            SourceGroup(
-              sourceId: g.sourceId,
-              label: g.label,
-              state: g.state,
-              songs: List.of(g.songs),
-              error: g.error,
-            ),
-        ]);
+    void emit() => onGroup?.call([for (final g in groups) g.copy()]);
 
     await Future.wait(groups.map((g) async {
       g.state = SourceSearchState.loading;
       emit();
       try {
-        final list = await _searchOne(g.sourceId, kw, page, limit).timeout(timeout);
+        final list =
+            await _searchOne(g.sourceId, kw, page, limit).timeout(timeout);
         g.songs = _rank(list, kw);
         g.state = SourceSearchState.done;
+        g.hasMore = list.length >= limit;
       } catch (e) {
         g.state = SourceSearchState.failed;
         g.error = _short(e);
@@ -99,6 +127,38 @@ class BuiltinSearch {
     }));
 
     return groups;
+  }
+
+  /// 加载某个源的下一页，就地追加到 [group]。返回追加条数（0 = 已到底）。
+  static Future<int> loadMore(SourceGroup group) async {
+    if (!group.canLoadMore) return 0;
+    group.loadingMore = true;
+    final next = group.page + 1;
+    try {
+      final list = await _searchOne(group.sourceId, group.keyword, next, pageSize)
+          .timeout(const Duration(seconds: 20));
+      if (list.isEmpty) {
+        group.hasMore = false;
+        return 0;
+      }
+      // 按 musicId 去重后追加（平台偶有跨页重复）
+      final existing = {for (final s in group.songs) s.musicId};
+      final fresh = [
+        for (final s in list)
+          if (existing.add(s.musicId)) s,
+      ];
+      group.songs = [...group.songs, ...fresh];
+      group.page = next;
+      // 不足一页通常意味着到底
+      if (list.length < pageSize) group.hasMore = false;
+      return fresh.length;
+    } catch (e) {
+      AppLog.w('BuiltinSearch', '${group.label} 第 $next 页加载失败: $e');
+      group.hasMore = false;
+      return 0;
+    } finally {
+      group.loadingMore = false;
+    }
   }
 
   static Future<List<MusicInfo>> _searchOne(
@@ -143,16 +203,13 @@ class BuiltinSearch {
     return [for (final e in scored) e.value];
   }
 
-  /// 跨源弱去重：同「歌名 + 主歌手」的后出现者合并到首个分组之后。
-  ///
-  /// 注意：**不删除**后出现的条目，只在 UI 层标注"其他源也有"，
-  /// 因为不同源的可用音质与取链成功率不同，用户需要保留选择权。
+  /// 跨源弱去重：返回「同一首歌出现在多个源」的映射。
+  /// 仅用于标注，不删除任何条目（各源音质与取链成功率不同）。
   static Map<String, List<String>> duplicates(List<SourceGroup> groups) {
     final seen = <String, List<String>>{};
     for (final g in groups) {
       for (final s in g.songs) {
-        final key = _dupKey(s);
-        final owners = seen.putIfAbsent(key, () => []);
+        final owners = seen.putIfAbsent(_dupKey(s), () => []);
         if (!owners.contains(g.sourceId)) owners.add(g.sourceId);
       }
     }
