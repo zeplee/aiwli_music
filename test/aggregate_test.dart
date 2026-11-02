@@ -10,11 +10,11 @@ void main() {
       onGroup: (g) {
         emissions++;
         // ignore: avoid_print
-        print('emit#$emissions ' + g.map((x) => '${x.label}:${x.state.name}/${x.count}').join(' | '));
+        print('emit#$emissions ${g.map((x) => '${x.label}:${x.state.name}/${x.count}').join(' | ')}');
       },
     );
     // ignore: avoid_print
-    print('最终: ' + groups.map((g) => '${g.label}=${g.count}(${g.state.name})').join(', '));
+    print('最终: ${groups.map((g) => '${g.label}=${g.count}(${g.state.name})').join(', ')}');
     for (final g in groups) {
       if (g.songs.isNotEmpty) {
         // ignore: avoid_print

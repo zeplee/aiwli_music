@@ -24,7 +24,6 @@ void main() {
   testWidgets('TabBar + TabBarView 切换（模拟搜索页结构）', (tester) async {
     // 复现搜索页的核心结构：1(全部) + 5 源 = 6 个 Tab
     final labels = ['全部', '酷我', 'QQ音乐', '网易云', '酷狗', '咪咕'];
-    late TabController ctrl;
     await tester.pumpWidget(MaterialApp(
       home: DefaultTabController(
         length: labels.length,
