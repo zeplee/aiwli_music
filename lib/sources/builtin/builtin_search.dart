@@ -2,7 +2,9 @@ import 'dart:async';
 
 import '../../core/models/music.dart';
 import '../../core/services/logger.dart';
+import 'kg_sdk.dart';
 import 'kw_sdk.dart';
+import 'mg_sdk.dart';
 import 'tx_sdk.dart';
 import 'wy_sdk.dart';
 
@@ -42,11 +44,13 @@ class BuiltinSearch {
   /// 平台 → 展示名。
   static const labels = <String, String>{
     'kw': '酷我',
+    'kg': '酷狗',
     'tx': 'QQ音乐',
     'wy': '网易云',
+    'mg': '咪咕',
   };
 
-  static const order = ['kw', 'tx', 'wy'];
+  static const order = ['kw', 'tx', 'wy', 'kg', 'mg'];
 
   /// 并发搜索，逐源回调（用于渐进式 UI）。
   ///
@@ -106,6 +110,10 @@ class BuiltinSearch {
         return TxSdk.search(keyword, page: page, limit: limit);
       case 'wy':
         return WySdk.search(keyword, page: page, limit: limit);
+      case 'kg':
+        return KgSdk.search(keyword, page: page, limit: limit);
+      case 'mg':
+        return MgSdk.search(keyword, page: page, limit: limit);
       default:
         return Future.value(const []);
     }
