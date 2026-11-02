@@ -1,0 +1,1870 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-palette="teal" data-mode="dark" data-platform="macos" data-layout="desktop">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aiwli Music · 交互原型 v3</title>
+<style>
+/* ============================================================
+   Aiwli Music — 交互原型 v3
+   交互来源：
+   · lx-music      桌面三栏常驻 / 密集列表 / 双栏并存
+   · 栖弦          封面主色驱动整页 mesh 背景 / 唱片模式 / 逐字歌词
+   · namida        沉浸式大封面 / 卡片浮起 / 自定义滚动条
+   · MusicFree     源能力矩阵 / 每源独立分组
+   ============================================================ */
+
+:root{
+  --r-xs:8px;--r-sm:12px;--r-md:16px;--r-lg:22px;--r-xl:30px;--r-full:999px;
+  --sp1:4px;--sp2:8px;--sp3:12px;--sp4:16px;--sp5:24px;--sp6:32px;--sp7:48px;--sp8:64px;
+  --ease:cubic-bezier(.22,1,.36,1);
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --t1:160ms;--t2:260ms;--t3:420ms;--t4:620ms;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  --nav:232px;--npw:352px;--bar:84px;--tab:62px;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+
+/* ---------- 调色板：每首歌一组，驱动整页 ---------- */
+[data-palette="teal"]{
+  --c1:#0B3B38; --c2:#1D6B62; --c3:#5FC9B6; --c4:#A7F0E2;
+  --accent:#5FD3C0; --accent-ink:#03201C;
+}
+[data-palette="amber"]{
+  --c1:#3A2107; --c2:#8A5100; --c3:#F0A94C; --c4:#FFDDB8;
+  --accent:#F2B45E; --accent-ink:#25150A;
+}
+[data-palette="violet"]{
+  --c1:#1A1236; --c2:#4A3A9E; --c3:#A99AF0; --c4:#E0D8FF;
+  --accent:#B0A3FF; --accent-ink:#150C42;
+}
+[data-palette="rose"]{
+  --c1:#3A0F1F; --c2:#8C3350; --c3:#EE8BA8; --c4:#FFD9E3;
+  --accent:#F090AC; --accent-ink:#31000F;
+}
+[data-palette="ocean"]{
+  --c1:#04202F; --c2:#0C5273; --c3:#54B4D8; --c4:#C4ECFA;
+  --accent:#63C2E4; --accent-ink:#00151F;
+}
+[data-mode="light"]{
+  --bg:#F6F4F0; --surface:#FFFFFF; --surface2:#F0EDE8; --surface3:#E7E3DC;
+  --ink:#17161A; --ink2:#5C5A63; --ink3:#98959F; --line:#DAD5CD;
+  --glass:rgba(255,255,255,.72);
+}
+[data-mode="dark"]{
+  --bg:#0C0E13; --surface:#14171F; --surface2:#1C202A; --surface3:#252A36;
+  --ink:#F2F1F5; --ink2:#A8A6B2; --ink3:#6E6C7A; --line:#2A2F3B;
+  --glass:rgba(20,23,31,.72);
+}
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font); background:var(--bg); color:var(--ink);
+  font-size:14px; line-height:1.5; overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column;
+  transition:background var(--t3) var(--ease), color var(--t2) var(--ease);
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input{font:inherit;color:inherit;border:none;background:none;outline:none}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:var(--r-full)}
+::-webkit-scrollbar-thumb:hover{background:var(--ink3)}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- Mesh 背景：封面主色渲染整页（栖弦手法） ---------- */
+.mesh{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.mesh i{
+  position:absolute;border-radius:50%;filter:blur(90px);
+  opacity:.55;transition:background var(--t4) var(--ease);
+  will-change:transform;
+}
+.mesh i:nth-child(1){width:60vw;height:60vw;left:-12vw;top:-18vh;background:var(--c2);animation:drift1 26s ease-in-out infinite}
+.mesh i:nth-child(2){width:52vw;height:52vw;right:-10vw;top:8vh;background:var(--c3);opacity:.34;animation:drift2 32s ease-in-out infinite}
+.mesh i:nth-child(3){width:46vw;height:46vw;left:22vw;bottom:-22vh;background:var(--c1);opacity:.6;animation:drift3 38s ease-in-out infinite}
+.mesh::after{
+  content:"";position:absolute;inset:0;
+  background:radial-gradient(120% 90% at 50% 0%,transparent 0%,var(--bg) 92%);
+}
+[data-mode="light"] .mesh i{opacity:.24}
+[data-mode="light"] .mesh::after{background:radial-gradient(120% 90% at 50% 0%,transparent 0%,var(--bg) 88%)}
+@keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(6vw,4vh) scale(1.12)}}
+@keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-5vw,6vh) scale(1.08)}}
+@keyframes drift3{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(4vw,-5vh) scale(1.1)}}
+
+/* ---------- 外壳 ---------- */
+.menubar{
+  display:none;height:28px;align-items:center;gap:var(--sp4);
+  padding:0 var(--sp4);font-size:12px;color:var(--ink2);
+  background:var(--glass);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--line);position:relative;z-index:30;flex:none;
+}
+[data-platform="macos"] .menubar{display:flex}
+.menubar b{color:var(--ink);font-weight:700;font-size:13px}
+.menubar span{cursor:default;padding:2px 4px;border-radius:4px}
+.menubar span:hover{background:var(--surface2);color:var(--ink)}
+.menubar .spacer{margin-left:auto;font-variant-numeric:tabular-nums}
+
+.winchrome{
+  display:none;height:40px;align-items:center;gap:var(--sp3);
+  background:var(--glass);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--line);
+  padding:0 var(--sp4);position:relative;z-index:30;flex:none;user-select:none;
+}
+[data-platform="macos"] .winchrome,
+[data-platform="windows"] .winchrome,
+[data-platform="linux"] .winchrome{display:flex}
+.traffic{display:flex;gap:8px;align-items:center;order:-1}
+.tl{width:12px;height:12px;border-radius:50%}
+.tl.r{background:#FF5F57}.tl.y{background:#FEBC2E}.tl.g{background:#28C840}
+[data-platform="linux"] .tl{width:14px;height:14px;border-radius:4px}
+.chrome-title{
+  position:absolute;left:50%;transform:translateX(-50%);
+  font-size:12.5px;font-weight:600;color:var(--ink2);letter-spacing:-.01em;
+}
+.winctrl{display:none;margin-left:auto;order:2}
+[data-platform="windows"] .winctrl{display:flex}
+[data-platform="windows"] .traffic{display:none}
+.wc{width:46px;height:40px;display:grid;place-items:center;color:var(--ink2);transition:background var(--t1)}
+.wc:hover{background:var(--surface2);color:var(--ink)}
+.wc.x:hover{background:#E81123;color:#fff}
+
+.safetop{
+  display:none;height:46px;align-items:center;justify-content:space-between;
+  padding:0 var(--sp5);font-size:13px;font-weight:600;
+  color:var(--ink);flex:none;position:relative;z-index:20;
+}
+[data-platform="android"] .safetop,[data-platform="ios"] .safetop{display:flex}
+[data-platform="ios"] .safetop::before{
+  content:"";position:absolute;top:11px;left:50%;transform:translateX(-50%);
+  width:104px;height:26px;border-radius:var(--r-full);background:var(--ink);z-index:1;
+}
+.safebot{display:none;flex:none;background:transparent;position:relative;z-index:20}
+[data-platform="ios"] .safebot{display:block;height:24px}
+[data-platform="ios"] .safebot::after{
+  content:"";display:block;width:128px;height:5px;border-radius:3px;
+  background:var(--ink);opacity:.32;margin:9px auto 0;
+}
+[data-platform="android"] .safebot{display:block;height:20px}
+[data-platform="android"] .safebot::after{
+  content:"";display:block;width:100px;height:4px;border-radius:2px;
+  background:var(--ink);opacity:.3;margin:8px auto 0;
+}
+
+/* ---------- 三栏骨架（lx 的桌面双栏 + 常驻播放） ---------- */
+.shell{
+  flex:1; min-height:0; display:grid; position:relative; z-index:10;
+  grid-template-columns:var(--nav) 1fr var(--npw);
+  grid-template-areas:"nav content np";
+}
+[data-layout="mobile"] .shell{
+  grid-template-columns:1fr; grid-template-areas:"content";
+}
+
+/* ---------- 侧栏 ---------- */
+.nav{
+  grid-area:nav; display:flex; flex-direction:column; gap:2px;
+  padding:var(--sp5) var(--sp3) var(--sp3);
+  background:var(--glass); backdrop-filter:blur(24px);
+  border-right:1px solid var(--line);
+}
+.logo{display:flex;align-items:center;gap:var(--sp3);padding:0 var(--sp3) var(--sp5)}
+.logo-mark{
+  width:34px;height:34px;border-radius:10px;flex:none;
+  background:linear-gradient(140deg,var(--c3),var(--accent));
+  display:grid;place-items:center;color:var(--accent-ink);
+  font-weight:800;font-size:15px;letter-spacing:-.02em;
+  box-shadow:0 6px 18px color-mix(in srgb,var(--accent) 34%,transparent);
+  transition:background var(--t3) var(--ease);
+}
+.logo-txt b{display:block;font-size:14px;font-weight:700;letter-spacing:-.015em}
+.logo-txt span{font-size:10.5px;color:var(--ink3);letter-spacing:.04em;text-transform:uppercase}
+
+.nav-btn{
+  display:flex;align-items:center;gap:var(--sp3);
+  padding:10px var(--sp4);border-radius:12px;color:var(--ink2);
+  font-weight:500;transition:all var(--t1) var(--ease);position:relative;
+}
+.nav-btn:hover{background:var(--surface2);color:var(--ink)}
+.nav-btn.on{background:var(--accent);color:var(--accent-ink);font-weight:650;
+  box-shadow:0 4px 14px color-mix(in srgb,var(--accent) 30%,transparent)}
+.nav-btn svg{flex:none;width:19px;height:19px;opacity:.9}
+.nav-btn .cnt{
+  margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;
+  background:var(--surface3);padding:1px 7px;border-radius:var(--r-full);
+}
+.nav-btn.on .cnt{background:color-mix(in srgb,var(--accent-ink) 20%,transparent);color:var(--accent-ink)}
+
+.nav-sec{margin-top:var(--sp5);padding:0 var(--sp4) var(--sp2);font-size:10.5px;
+  font-weight:700;color:var(--ink3);letter-spacing:.08em;text-transform:uppercase}
+.playlist-mini{display:flex;flex-direction:column;gap:1px;overflow-y:auto}
+.pl-item{
+  display:flex;align-items:center;gap:var(--sp3);padding:7px var(--sp4);
+  border-radius:9px;color:var(--ink2);font-size:13px;
+  transition:all var(--t1);cursor:pointer;
+}
+.pl-item:hover{background:var(--surface2);color:var(--ink)}
+.pl-dot{width:7px;height:7px;border-radius:2px;background:var(--accent);flex:none;opacity:.75}
+
+.nav-foot{margin-top:auto;padding-top:var(--sp4);border-top:1px solid var(--line);display:flex;gap:4px;padding-left:var(--sp2)}
+
+/* ---------- 内容区 ---------- */
+.content{grid-area:content;overflow-y:auto;overflow-x:hidden;position:relative;padding-bottom:var(--sp6)}
+[data-layout="mobile"] .content{padding-bottom:0}
+
+.view{display:none}
+.view.on{display:block;animation:viewIn var(--t3) var(--ease)}
+@keyframes viewIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+.wrap{padding:var(--sp6) var(--sp7) var(--sp5);max-width:1080px;margin:0 auto}
+[data-layout="mobile"] .wrap{padding:var(--sp4) var(--sp4) var(--sp5)}
+
+.head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--sp4);margin-bottom:var(--sp5)}
+.h1{font-size:30px;font-weight:750;letter-spacing:-.03em;line-height:1.15}
+[data-layout="mobile"] .h1{font-size:23px}
+.h-sub{font-size:13px;color:var(--ink2);margin-top:4px}
+
+/* ---------- 封面系统：程序化生成质感 ---------- */
+.art{
+  position:relative;aspect-ratio:1;border-radius:var(--r-md);overflow:hidden;
+  background:var(--c2);flex:none;isolation:isolate;
+  box-shadow:0 10px 30px -12px rgba(0,0,0,.5);
+}
+.art::before{
+  content:"";position:absolute;inset:0;
+  background:
+    radial-gradient(80% 80% at 22% 18%, var(--c4) 0%, transparent 55%),
+    radial-gradient(70% 70% at 82% 76%, var(--c1) 0%, transparent 58%),
+    conic-gradient(from 200deg at 62% 34%, var(--c3), var(--c2), var(--c1), var(--c3));
+  opacity:.95;
+}
+.art::after{
+  content:"";position:absolute;inset:0;
+  background-image:
+    repeating-linear-gradient(38deg, rgba(255,255,255,.07) 0 1px, transparent 1px 4px),
+    radial-gradient(120% 120% at 50% 50%, transparent 40%, rgba(0,0,0,.34) 100%);
+  mix-blend-mode:overlay;
+}
+.art .glyph{
+  position:absolute;inset:0;display:grid;place-items:center;
+  color:rgba(255,255,255,.5);z-index:2;
+  font-size:clamp(20px,32%,74px);font-weight:800;letter-spacing:-.05em;
+  text-shadow:0 2px 20px rgba(0,0,0,.35);
+}
+/* 唱片（栖弦的圆形模式） */
+.art.vinyl{border-radius:50%}
+.art.vinyl::before{
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(0,0,0,.5) 0 1px, transparent 1px 3px),
+    radial-gradient(60% 60% at 50% 50%, var(--c4) 0%, var(--c3) 26%, var(--c2) 48%, var(--c1) 72%);
+}
+.art.vinyl .glyph{font-size:clamp(14px,18%,38px);opacity:.8}
+.art.vinyl.spin{animation:spin 14s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---------- 首页 ---------- */
+.hero{
+  position:relative;border-radius:var(--r-xl);overflow:hidden;
+  padding:var(--sp7);margin-bottom:var(--sp6);
+  background:linear-gradient(120deg, color-mix(in srgb,var(--c2) 82%, transparent), color-mix(in srgb,var(--c1) 70%, transparent));
+  display:flex;gap:var(--sp6);align-items:center;
+  border:1px solid color-mix(in srgb,var(--c3) 18%, transparent);
+  box-shadow:0 22px 60px -28px color-mix(in srgb,var(--c1) 90%, transparent);
+}
+[data-layout="mobile"] .hero{padding:var(--sp5);gap:var(--sp4);margin-bottom:var(--sp5)}
+.hero .art{width:172px;box-shadow:0 20px 46px -16px rgba(0,0,0,.65)}
+[data-layout="mobile"] .hero .art{width:104px}
+.hero-body{min-width:0;color:#fff}
+.hero-tag{
+  display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;
+  letter-spacing:.09em;text-transform:uppercase;
+  background:rgba(255,255,255,.16);padding:4px 10px;border-radius:var(--r-full);
+  margin-bottom:var(--sp3);backdrop-filter:blur(8px);
+}
+.hero-title{font-size:32px;font-weight:800;letter-spacing:-.035em;line-height:1.1;text-shadow:0 2px 24px rgba(0,0,0,.3)}
+[data-layout="mobile"] .hero-title{font-size:20px}
+.hero-meta{font-size:13px;opacity:.78;margin-top:var(--sp2)}
+.hero-actions{display:flex;gap:var(--sp2);margin-top:var(--sp4)}
+
+.btn-solid{
+  display:inline-flex;align-items:center;gap:7px;
+  background:var(--accent);color:var(--accent-ink);
+  padding:10px var(--sp5);border-radius:var(--r-full);font-weight:700;font-size:13.5px;
+  transition:transform var(--t1) var(--ease), box-shadow var(--t1);
+  box-shadow:0 6px 20px color-mix(in srgb,var(--accent) 38%,transparent);
+}
+.btn-solid:hover{transform:translateY(-1.5px);box-shadow:0 10px 26px color-mix(in srgb,var(--accent) 44%,transparent)}
+.btn-solid:active{transform:translateY(0)}
+.btn-glass{
+  display:inline-flex;align-items:center;gap:7px;
+  background:rgba(255,255,255,.14);color:#fff;
+  padding:10px var(--sp4);border-radius:var(--r-full);font-weight:600;font-size:13px;
+  backdrop-filter:blur(10px);transition:background var(--t1);
+}
+.btn-glass:hover{background:rgba(255,255,255,.24)}
+
+.sec{display:flex;align-items:baseline;gap:var(--sp3);margin:var(--sp6) 0 var(--sp4)}
+.sec h2{font-size:17px;font-weight:720;letter-spacing:-.02em}
+.sec .more{margin-left:auto;font-size:12px;color:var(--ink2);cursor:pointer}
+.sec .more:hover{color:var(--accent)}
+
+/* 横向卡带 */
+.strip{display:flex;gap:var(--sp4);overflow-x:auto;padding:4px 0 var(--sp4);scroll-snap-type:x mandatory}
+.strip::-webkit-scrollbar{height:6px}
+.strip::-webkit-scrollbar-thumb{background:transparent}
+.strip:hover::-webkit-scrollbar-thumb{background:var(--line)}
+.tile{width:168px;flex:none;scroll-snap-align:start;cursor:pointer;position:relative}
+[data-layout="mobile"] .tile{width:138px}
+.tile .art{border-radius:var(--r-md);transition:transform var(--t3) var(--ease), box-shadow var(--t3)}
+.tile:hover .art{transform:translateY(-6px) scale(1.015);box-shadow:0 22px 46px -16px rgba(0,0,0,.62)}
+.tile-play{
+  position:absolute;right:10px;bottom:calc(var(--sp6) + 10px);
+  width:40px;height:40px;border-radius:50%;
+  background:var(--accent);color:var(--accent-ink);
+  display:grid;place-items:center;opacity:0;transform:translateY(8px) scale(.86);
+  transition:all var(--t2) var(--ease);z-index:3;
+  box-shadow:0 8px 22px color-mix(in srgb,var(--accent) 46%,transparent);
+}
+.tile:hover .tile-play{opacity:1;transform:none}
+.t-title{font-size:13.5px;font-weight:640;margin-top:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t-sub{font-size:11.5px;color:var(--ink2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* 网格 */
+.grid{display:grid;gap:var(--sp4);grid-template-columns:repeat(auto-fill,minmax(158px,1fr))}
+[data-layout="mobile"] .grid{grid-template-columns:repeat(2,1fr);gap:var(--sp3)}
+
+/* ---------- 曲目列表（lx 密度 + namida 圆角） ---------- */
+.list{background:var(--surface);border-radius:var(--r-lg);overflow:hidden;border:1px solid var(--line)}
+[data-layout="mobile"] .list{border-radius:var(--r-md)}
+.row{
+  display:grid;grid-template-columns:40px 46px 1fr 92px 64px 40px;
+  align-items:center;gap:var(--sp3);padding:9px var(--sp4);
+  cursor:pointer;transition:background var(--t1);position:relative;
+}
+[data-layout="mobile"] .row{grid-template-columns:26px 40px 1fr auto;padding:8px var(--sp3);gap:10px}
+.row:not(:last-child)::after{
+  content:"";position:absolute;left:calc(var(--sp4) + 40px + 46px);right:var(--sp4);
+  bottom:0;height:1px;background:var(--line);opacity:.6;
+}
+[data-layout="mobile"] .row:not(:last-child)::after{left:56px}
+.row:hover{background:var(--surface2)}
+.row.on{background:color-mix(in srgb,var(--accent) 15%, transparent)}
+.row.on .r-name{color:var(--accent);font-weight:700}
+.r-idx{font-size:12px;color:var(--ink3);text-align:center;font-variant-numeric:tabular-nums}
+.r-art{width:40px;height:40px;border-radius:8px}
+[data-layout="mobile"] .r-art{width:36px;height:36px}
+.r-name{font-size:14px;font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}
+.r-meta{font-size:11.5px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:1px}
+.r-src{font-size:10.5px;padding:2px 8px;border-radius:var(--r-full);
+  background:var(--surface3);color:var(--ink2);justify-self:start;white-space:nowrap}
+.r-dur{font-size:12px;color:var(--ink3);font-variant-numeric:tabular-nums;text-align:right}
+[data-layout="mobile"] .r-src{display:none}
+
+/* 播放中的波形 */
+.bars{display:flex;align-items:flex-end;justify-content:center;gap:2px;height:15px}
+.bars i{width:2.5px;border-radius:1px;background:var(--accent);animation:bar 1s var(--ease) infinite}
+.bars i:nth-child(2){animation-delay:.22s}.bars i:nth-child(3){animation-delay:.44s}.bars i:nth-child(4){animation-delay:.66s}
+@keyframes bar{0%,100%{height:5px}50%{height:15px}}
+.paused .bars i{animation-play-state:paused}
+
+/* ---------- 右侧常驻播放面板（lx 双栏并存） ---------- */
+.nowpanel{
+  grid-area:np;background:var(--glass);backdrop-filter:blur(26px);
+  border-left:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+[data-layout="mobile"] .nowpanel{display:none}
+
+.np-top{padding:var(--sp5) var(--sp5) var(--sp3);display:flex;align-items:center;justify-content:space-between}
+.np-label{font-size:10.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3)}
+.np-art-wrap{padding:0 var(--sp5);position:relative}
+.np-art{width:100%;border-radius:var(--r-lg);transition:all var(--t4) var(--ease)}
+.np-art-wrap .art{box-shadow:0 26px 60px -24px color-mix(in srgb,var(--c1) 90%,transparent)}
+.np-meta{padding:var(--sp5) var(--sp5) var(--sp3);text-align:left}
+.np-song{font-size:19px;font-weight:730;letter-spacing:-.025em;line-height:1.25}
+.np-artist{font-size:12.5px;color:var(--ink2);margin-top:3px}
+
+.np-prog{padding:0 var(--sp5)}
+.seek{position:relative;height:5px;border-radius:var(--r-full);background:var(--surface3);cursor:pointer}
+.seek::before{content:"";position:absolute;inset:-9px 0}
+.seek-fill{height:100%;border-radius:var(--r-full);background:var(--accent);width:34%;position:relative;transition:width 140ms linear}
+.seek-fill::after{
+  content:"";position:absolute;right:-5px;top:50%;transform:translateY(-50%) scale(0);
+  width:12px;height:12px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 24%,transparent);
+  transition:transform var(--t1) var(--ease);
+}
+.seek:hover .seek-fill::after{transform:translateY(-50%) scale(1)}
+.np-times{display:flex;justify-content:space-between;font-size:11px;color:var(--ink3);
+  font-variant-numeric:tabular-nums;margin-top:7px}
+
+.np-ctrl{display:flex;align-items:center;justify-content:center;gap:var(--sp2);padding:var(--sp4) var(--sp5) var(--sp3)}
+.cbtn{
+  width:36px;height:36px;border-radius:50%;display:grid;place-items:center;
+  color:var(--ink2);transition:all var(--t1);
+}
+.cbtn:hover{background:var(--surface2);color:var(--ink);transform:scale(1.06)}
+.cbtn.on{color:var(--accent)}
+.cbtn.main{
+  width:52px;height:52px;background:var(--accent);color:var(--accent-ink);
+  box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 40%,transparent);
+}
+.cbtn.main:hover{transform:scale(1.07)}
+
+.np-lyric{
+  flex:1;overflow:hidden;position:relative;
+  padding:var(--sp3) var(--sp5) var(--sp5);
+  mask-image:linear-gradient(to bottom,transparent 0%,#000 18%,#000 78%,transparent 100%);
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 18%,#000 78%,transparent 100%);
+}
+.ly-view{transition:transform var(--t4) var(--ease)}
+.ly{
+  font-size:13px;font-weight:500;color:var(--ink3);
+  padding:6px 0;line-height:1.55;
+  transition:all var(--t3) var(--ease);
+  transform-origin:left center;
+}
+.ly.on{font-size:15.5px;font-weight:700;color:var(--accent);transform:scale(1.02)}
+.ly.tr{font-size:11px;opacity:.66;font-weight:400;color:var(--ink2);padding-top:1px}
+.ly.on.tr{color:var(--ink2);opacity:.9}
+
+.np-extra{display:flex;gap:var(--sp2);padding:0 var(--sp5) var(--sp4);border-top:1px solid var(--line);padding-top:var(--sp3)}
+
+/* ---------- 全屏播放器（移动/沉浸） ---------- */
+.fullplay{
+  position:fixed;inset:0;z-index:200;background:var(--bg);
+  display:flex;flex-direction:column;
+  transform:translateY(100%);opacity:0;pointer-events:none;
+  transition:transform var(--t4) var(--ease), opacity var(--t2);
+}
+.fullplay.open{transform:none;opacity:1;pointer-events:auto}
+.fp-drag{height:22px;display:grid;place-items:center;flex:none;cursor:grab}
+.fp-drag i{width:38px;height:4px;border-radius:2px;background:var(--ink3);opacity:.5}
+.fp-head{display:flex;align-items:center;justify-content:space-between;padding:var(--sp2) var(--sp5) var(--sp3);flex:none}
+.fp-body{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:var(--sp7);padding:0 var(--sp7);align-items:center;min-height:0;overflow:hidden}
+[data-layout="mobile"] .fp-body{grid-template-columns:1fr;grid-template-rows:1fr auto;gap:var(--sp4);padding:0 var(--sp5)}
+.fp-art{display:grid;place-items:center;height:100%}
+.fp-art .art{
+  width:min(380px,100%);border-radius:var(--r-xl);
+  box-shadow:0 40px 90px -30px color-mix(in srgb,var(--c1) 92%,transparent);
+  transition:border-radius var(--t4) var(--ease), width var(--t4) var(--ease);
+}
+.fp-lyr{height:100%;overflow:hidden;display:grid;place-items:center;position:relative}
+.fp-lyr .ly-view{width:100%;text-align:center}
+.fp-lyq{font-size:16px;font-weight:600;color:var(--ink3);opacity:.45;padding:7px 0;
+  transition:all var(--t3) var(--ease);line-height:1.5}
+.fp-lyq.on{font-size:23px;font-weight:750;color:var(--ink);opacity:1;letter-spacing:-.02em}
+.fp-lyq.on .hl{color:var(--accent)}
+.fp-lyq .sub{font-size:11.5px;opacity:.6;font-weight:400;margin-top:1px}
+[data-layout="mobile"] .fp-lyq{font-size:13px;padding:4px 0}
+[data-layout="mobile"] .fp-lyq.on{font-size:17px}
+
+.fp-foot{flex:none;padding:0 var(--sp7) var(--sp6);max-width:720px;margin:0 auto;width:100%}
+[data-layout="mobile"] .fp-foot{padding:0 var(--sp5) var(--sp4)}
+.fp-title{text-align:center;margin-bottom:var(--sp4)}
+.fp-song{font-size:26px;font-weight:780;letter-spacing:-.03em}
+[data-layout="mobile"] .fp-song{font-size:18px}
+.fp-artist{font-size:13px;color:var(--ink2);margin-top:3px}
+.fp-row{display:flex;align-items:center;justify-content:center;gap:var(--sp3);margin-top:var(--sp5)}
+.fp-row .cbtn{width:40px;height:40px}
+.fp-row .cbtn.main{width:58px;height:58px}
+
+/* ---------- 底部迷你播放条（移动） ---------- */
+.mini{
+  display:none;align-items:center;gap:var(--sp3);
+  padding:var(--sp2) var(--sp4);flex:none;position:relative;z-index:20;
+  background:var(--glass);backdrop-filter:blur(22px);
+  border-top:1px solid var(--line);
+}
+[data-layout="mobile"] .mini{display:flex}
+.mini .art{width:42px;height:42px;border-radius:9px}
+.mini-txt{flex:1;min-width:0}
+.mini-t{font-size:13px;font-weight:620;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini-a{font-size:11px;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini-prog{position:absolute;left:0;right:0;top:0;height:2px;background:var(--surface3)}
+.mini-prog i{display:block;height:100%;background:var(--accent);width:34%;transition:width 200ms linear}
+
+/* ---------- 底部 Tab（移动） ---------- */
+.tabbar{
+  display:none;flex:none;align-items:center;justify-content:space-around;
+  background:var(--glass);backdrop-filter:blur(24px);
+  border-top:1px solid var(--line);height:var(--tab);z-index:20;
+}
+[data-layout="mobile"] .tabbar{display:flex}
+.tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:6px 0;color:var(--ink3);font-size:10px;font-weight:600;
+  position:relative;transition:color var(--t1);
+}
+.tab svg{width:23px;height:23px}
+.tab.on{color:var(--accent)}
+.tab.on::before{
+  content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);
+  width:22px;height:3px;border-radius:0 0 3px 3px;background:var(--accent);
+}
+
+/* ---------- 队列抽屉 ---------- */
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:340px;max-width:88vw;z-index:180;
+  background:var(--surface);border-left:1px solid var(--line);
+  transform:translateX(100%);transition:transform var(--t3) var(--ease);
+  display:flex;flex-direction:column;box-shadow:-20px 0 60px -30px rgba(0,0,0,.4);
+}
+.drawer.open{transform:none}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;padding:var(--sp4) var(--sp5);border-bottom:1px solid var(--line)}
+.drawer-head b{font-size:15px;font-weight:700}
+.drawer-body{flex:1;overflow-y:auto;padding:var(--sp2)}
+.q-item{display:flex;align-items:center;gap:var(--sp3);padding:8px;border-radius:10px;cursor:pointer;transition:background var(--t1)}
+.q-item:hover{background:var(--surface2)}
+.q-item.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.q-item .art{width:40px;height:40px;border-radius:8px}
+.q-t{font-size:13px;font-weight:580;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.q-a{font-size:11px;color:var(--ink2)}
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:170;opacity:0;pointer-events:none;transition:opacity var(--t2);backdrop-filter:blur(2px)}
+.scrim.on{opacity:1;pointer-events:auto}
+
+/* ---------- 源管理 ---------- */
+.src{
+  background:var(--surface);border-radius:var(--r-lg);padding:var(--sp4);
+  border:1px solid var(--line);margin-bottom:var(--sp3);
+  transition:border-color var(--t1), transform var(--t1);
+}
+.src:hover{border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+.src-h{display:flex;gap:var(--sp3);align-items:flex-start}
+.src-ico{
+  width:44px;height:44px;border-radius:12px;flex:none;display:grid;place-items:center;
+  font-weight:800;font-size:16px;color:var(--accent-ink);
+  background:linear-gradient(140deg,var(--c3),var(--accent));
+}
+.src-n{font-size:15px;font-weight:680;display:flex;align-items:center;gap:var(--sp2);flex-wrap:wrap}
+.chip-v{font-size:10.5px;padding:1px 7px;border-radius:var(--r-full);background:var(--surface3);color:var(--ink2);font-weight:600}
+.src-m{font-size:12px;color:var(--ink2);margin-top:3px;display:flex;align-items:center;gap:6px}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.ok{background:#37C46B}.dot.warn{background:#F0A62E}.dot.bad{background:#E4574B}.dot.unk{background:var(--ink3)}
+.caps{display:flex;gap:5px;flex-wrap:wrap;margin-top:var(--sp3)}
+.cap{font-size:11px;padding:3px 9px;border-radius:var(--r-full);background:var(--surface3);color:var(--ink3)}
+.cap.y{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent);font-weight:600}
+.cap.n{opacity:.4;text-decoration:line-through}
+
+/* 开关 */
+.sw{width:44px;height:26px;border-radius:var(--r-full);background:var(--surface3);position:relative;flex:none;transition:background var(--t2);cursor:pointer}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform var(--t2) var(--ease);box-shadow:0 1px 4px rgba(0,0,0,.28)}
+.sw.on{background:var(--accent)}
+.sw.on::after{transform:translateX(18px)}
+
+/* 设置 */
+.sgroup{background:var(--surface);border-radius:var(--r-lg);padding:0 var(--sp4);margin-bottom:var(--sp3);border:1px solid var(--line)}
+.srow{display:flex;align-items:center;justify-content:space-between;gap:var(--sp4);padding:14px 0;border-bottom:1px solid var(--line)}
+.srow:last-child{border-bottom:none}
+.sl{font-size:13.5px;font-weight:560}
+.sd{font-size:11.5px;color:var(--ink2);margin-top:2px}
+.sv{font-size:12.5px;color:var(--ink2);display:flex;align-items:center;gap:var(--sp2)}
+.swatches{display:flex;gap:7px}
+.swatch{width:24px;height:24px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:transform var(--t1)}
+.swatch:hover{transform:scale(1.14)}
+.swatch.on{border-color:var(--ink)}
+
+/* ---------- 平台切换器 ---------- */
+.stage{
+  position:fixed;bottom:14px;left:50%;transform:translateX(-50%);
+  z-index:150;display:flex;gap:2px;padding:5px;
+  background:var(--glass);backdrop-filter:blur(20px);
+  border:1px solid var(--line);border-radius:var(--r-full);
+  box-shadow:0 10px 30px -12px rgba(0,0,0,.3);
+}
+.seg{padding:6px 13px;border-radius:var(--r-full);font-size:11.5px;font-weight:600;color:var(--ink2);transition:all var(--t1)}
+.seg:hover{color:var(--ink)}
+.seg.on{background:var(--accent);color:var(--accent-ink);box-shadow:0 3px 12px color-mix(in srgb,var(--accent) 34%,transparent)}
+
+/* ---------- 平台可见性 ---------- */
+.only-desktop{display:none!important}
+[data-platform="macos"] .only-desktop,[data-platform="windows"] .only-desktop,[data-platform="linux"] .only-desktop{display:flex!important}
+.only-mobile{display:none!important}
+[data-platform="android"] .only-mobile,[data-platform="ios"] .only-mobile{display:flex!important}
+
+/* 移动端舞台 */
+body[data-layout="mobile"]{background:var(--bg)}
+[data-layout="mobile"] .app-frame{
+  width:100%;max-width:430px;margin:0 auto;height:100%;
+  display:flex;flex-direction:column;overflow:hidden;
+  box-shadow:0 0 0 1px var(--line),0 30px 70px -28px rgba(0,0,0,.4);
+  border-radius:22px;
+}
+body[data-layout="mobile"]{padding:14px 0;align-items:center;overflow:auto}
+.app-frame{display:flex;flex-direction:column;flex:1;min-height:0}
+
+
+/* ---------- 评论面板（lx 结构：热门/最新 + 楼层 + 点赞） ---------- */
+.np-tabs{display:flex;gap:2px;padding:0 var(--sp5);margin-bottom:var(--sp2)}
+.np-tab{
+  flex:1;padding:7px 0;font-size:12px;font-weight:650;color:var(--ink3);
+  border-radius:9px;transition:all var(--t1);text-align:center;
+}
+.np-tab:hover{background:var(--surface2);color:var(--ink)}
+.np-tab.on{background:var(--surface3);color:var(--ink)}
+.np-tab .n{font-size:10.5px;opacity:.7;margin-left:3px;font-variant-numeric:tabular-nums}
+
+.pane{display:none;flex:1;min-height:0;flex-direction:column}
+.pane.on{display:flex}
+
+.cmt-scroll{
+  flex:1;overflow-y:auto;padding:0 var(--sp5) var(--sp4);
+}
+.cmt{
+  display:flex;gap:10px;padding:11px 0;
+  border-bottom:1px solid var(--line);
+}
+.cmt:last-child{border-bottom:none}
+.cmt-av{
+  width:30px;height:30px;border-radius:50%;flex:none;
+  display:grid;place-items:center;font-size:11px;font-weight:700;
+  color:var(--accent-ink);background:linear-gradient(140deg,var(--c3),var(--accent));
+  opacity:.9;
+}
+.cmt-main{flex:1;min-width:0}
+.cmt-top{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap}
+.cmt-name{font-size:12px;font-weight:650;color:var(--ink2)}
+.cmt-time{font-size:10.5px;color:var(--ink3)}
+.cmt-like{
+  margin-left:auto;display:flex;align-items:center;gap:3px;
+  font-size:10.5px;color:var(--ink3);cursor:pointer;
+  padding:2px 5px;border-radius:6px;transition:all var(--t1);
+}
+.cmt-like:hover{background:var(--surface2)}
+.cmt-like.on{color:#EF5B7E}
+.cmt-txt{font-size:12.5px;line-height:1.6;color:var(--ink);margin-top:3px;word-break:break-word}
+.cmt-loc{font-size:10.5px;color:var(--ink3);margin-top:3px}
+
+/* 楼层回复 */
+.cmt-replies{
+  margin-top:8px;padding-left:10px;
+  border-left:2px solid var(--line);
+}
+.cmt-reply{display:flex;gap:7px;padding:6px 0}
+.cmt-reply .cmt-av{width:22px;height:22px;font-size:9px}
+.cmt-reply .cmt-name{font-size:11px}
+.cmt-reply .cmt-txt{font-size:11.5px;margin-top:2px}
+.cmt-reply-more{
+  font-size:11px;color:var(--accent);font-weight:600;
+  padding:4px 0;cursor:pointer;
+}
+.cmt-reply-more:hover{text-decoration:underline}
+
+.cmt-empty,.cmt-err{
+  padding:var(--sp6) var(--sp2);text-align:center;
+  font-size:12px;color:var(--ink3);
+}
+.cmt-err{color:#E4574B;cursor:pointer}
+
+.cmt-pager{
+  display:flex;align-items:center;justify-content:center;gap:6px;
+  padding:var(--sp3) 0 var(--sp2);flex:none;
+}
+.pg{
+  min-width:26px;height:26px;padding:0 7px;border-radius:7px;
+  display:grid;place-items:center;font-size:11.5px;font-weight:600;
+  color:var(--ink2);font-variant-numeric:tabular-nums;transition:all var(--t1);
+}
+.pg:hover{background:var(--surface2);color:var(--ink)}
+.pg.on{background:var(--accent);color:var(--accent-ink)}
+.pg:disabled{opacity:.3;cursor:not-allowed}
+
+/* 全屏播放器里的评论 */
+.fp-pane{height:100%;display:none;flex-direction:column;min-height:0}
+.fp-pane.on{display:flex}
+.fp-tabs{display:flex;gap:4px;justify-content:center;margin-bottom:var(--sp3);flex:none}
+.fp-tab{
+  padding:7px 18px;border-radius:var(--r-full);font-size:12.5px;font-weight:650;
+  color:var(--ink3);background:var(--surface2);transition:all var(--t1);
+}
+.fp-tab.on{background:var(--accent);color:var(--accent-ink)}
+.fp-cmt{flex:1;overflow-y:auto;padding:0 4px}
+[data-layout="mobile"] .fp-cmt{padding:0}
+[data-layout="mobile"] .cmt{padding:10px 0}
+[data-layout="mobile"] .cmt-txt{font-size:13px}
+[data-layout="mobile"] .cmt-name{font-size:12.5px}
+
+
+/* 移动端全屏播放器：单列紧凑 */
+[data-layout="mobile"] .fp-body{
+  grid-template-columns:1fr;
+  grid-template-rows:auto 1fr;
+  padding:0 var(--sp5);
+  gap:var(--sp4);
+}
+[data-layout="mobile"] .fp-art .art{width:min(230px,62vw);border-radius:var(--r-lg)}
+[data-layout="mobile"] .fp-art{padding-top:var(--sp2)}
+[data-layout="mobile"] .fp-foot{max-width:none;padding:0 var(--sp5) var(--sp5)}
+[data-layout="mobile"] .fp-song{font-size:19px}
+[data-layout="mobile"] .fp-artist{font-size:12px}
+[data-layout="mobile"] .fp-row .cbtn.main{width:54px;height:54px}
+[data-layout="mobile"] .fp-row{margin-top:var(--sp4);gap:var(--sp2)}
+[data-layout="mobile"] .fp-head{padding:var(--sp1) var(--sp4) var(--sp2)}
+/* 移动端评论时，封面收起 */
+[data-layout="mobile"] .fp-pane#fp-pane-comment ~ *{}
+[data-layout="mobile"] .fp-body:has(.fp-pane#fp-pane-comment.on){
+  grid-template-rows:0 1fr;
+}
+[data-layout="mobile"] .fp-body:has(.fp-pane#fp-pane-comment.on) .fp-art{
+  display:none;
+}
+
+
+/* 音量滑块 */
+.vol-slider{
+  width:64px;height:4px;border-radius:var(--r-full);background:var(--surface3);
+  position:relative;cursor:pointer;flex:none;
+}
+.vol-slider::before{content:"";position:absolute;inset:-8px 0}
+.vol-slider i{
+  display:block;height:100%;border-radius:var(--r-full);background:var(--ink2);
+  transition:background var(--t1),width 80ms linear;
+}
+.vol-slider:hover i{background:var(--accent)}
+
+
+/* 右键 / 长按菜单 */
+.ctxmenu{
+  position:fixed;z-index:300;min-width:196px;padding:6px;
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:14px;box-shadow:0 18px 44px -14px rgba(0,0,0,.4);
+  opacity:0;pointer-events:none;transform:scale(.96) translateY(-4px);
+  transform-origin:top left;transition:opacity var(--t1),transform var(--t1);
+}
+.ctxmenu.on{opacity:1;pointer-events:auto;transform:none}
+.ctx-item{
+  display:flex;align-items:center;gap:9px;width:100%;
+  padding:8px 10px;border-radius:9px;font-size:13px;color:var(--ink);
+  text-align:left;transition:background var(--t1);
+}
+.ctx-item:hover{background:var(--surface2)}
+.ctx-item svg{color:var(--ink2);flex:none}
+.ctx-sep{height:1px;background:var(--line);margin:5px 8px}
+
+
+/* 搜索筛选 chip */
+.filter-row{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:var(--sp5)}
+.fchip{
+  padding:6px 13px;border-radius:var(--r-full);font-size:12px;font-weight:600;
+  color:var(--ink2);background:var(--surface);border:1px solid var(--line);
+  transition:all var(--t1);
+}
+.fchip:hover{border-color:var(--accent);color:var(--ink)}
+.fchip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+
+/* 涟漪 */
+.rp{position:absolute;border-radius:50%;background:currentColor;opacity:.2;transform:scale(0);animation:rp .5s var(--ease) forwards;pointer-events:none}
+@keyframes rp{to{transform:scale(2.8);opacity:0}}
+</style>
+</head>
+<body>
+
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+<symbol id="i-home" viewBox="0 0 24 24"><path fill="currentColor" d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5a6.5 6.5 0 1 0-6.5 6.5c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14"/></symbol>
+<symbol id="i-lib" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"/></symbol>
+<symbol id="i-dl" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7zM5 18v2h14v-2z"/></symbol>
+<symbol id="i-src" viewBox="0 0 24 24"><path fill="currentColor" d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5"/></symbol>
+<symbol id="i-set" viewBox="0 0 24 24"><path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8m9.4 5.5.1-1.5-.1-1.5-2.2-.4a7.6 7.6 0 0 0-.9-2.2l1.2-1.9L17.4 4l-1.9 1.2a7.6 7.6 0 0 0-2.2-.9L12.9 2h-1.8l-.4 2.3a7.6 7.6 0 0 0-2.2.9L6.6 4 4.5 6.1l1.2 1.9a7.6 7.6 0 0 0-.9 2.2L2.5 10.5 2.4 12l.1 1.5 2.3.4a7.6 7.6 0 0 0 .9 2.2l-1.2 1.9L6.6 20l1.9-1.2a7.6 7.6 0 0 0 2.2.9l.4 2.3h1.8l.4-2.3a7.6 7.6 0 0 0 2.2-.9L17.4 20l2.1-2.1-1.2-1.9a7.6 7.6 0 0 0 .9-2.2z"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5.14v13.72L19 12z"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z"/></symbol>
+<symbol id="i-prev" viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></symbol>
+<symbol id="i-next" viewBox="0 0 24 24"><path fill="currentColor" d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></symbol>
+<symbol id="i-shuffle" viewBox="0 0 24 24"><path fill="currentColor" d="M10.6 13.4 7.4 10.2 3 14.6l1.4 1.4 3-3 3.2 3.2zM18 5h-4l1.8 1.8-3.2 3.2 1.4 1.4 3.2-3.2L19 10V5zm0 12-1.8-1.8-3.3 3.3-1.4-1.4 4-4L18 15z"/></symbol>
+<symbol id="i-repeat" viewBox="0 0 24 24"><path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z"/></symbol>
+<symbol id="i-heart" viewBox="0 0 24 24"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5A5.5 5.5 0 0 1 7.5 3c1.74 0 3.41.81 4.5 2.09A5.99 5.99 0 0 1 16.5 3 5.5 5.5 0 0 1 22 8.5c0 3.78-3.4 6.86-8.55 11.54z"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><path fill="currentColor" d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4m0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4m0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4"/></symbol>
+<symbol id="i-queue" viewBox="0 0 24 24"><path fill="currentColor" d="M15 6H3v2h12zm0 4H3v2h12zm0 4H3v2h12zm3-8v11.3a3 3 0 1 0 2 2.8V8h3V6z"/></symbol>
+<symbol id="i-vol" viewBox="0 0 24 24"><path fill="currentColor" d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 8v8a4.5 4.5 0 0 0 2.5-4"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path fill="currentColor" d="m7 10 5 5 5-5z"/></symbol>
+<symbol id="i-cd" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="12" cy="12" r="3" fill="currentColor"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36A6.5 6.5 0 0 1 12 3"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" fill="currentColor"/><path stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 2v2.4M12 19.6V22M2 12h2.4M19.6 12H22M4.9 4.9l1.7 1.7M17.4 17.4l1.7 1.7M19.1 4.9l-1.7 1.7M6.6 17.4l-1.7 1.7"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></symbol>
+</svg>
+
+<div class="mesh"><i></i><i></i><i></i></div>
+
+<!-- 菜单栏（macOS） -->
+<div class="menubar">
+  <b>Aiwli</b><span>文件</span><span>编辑</span><span>播放</span><span>曲目</span><span>窗口</span><span>帮助</span>
+  <span class="spacer" id="mbTime">21:04</span>
+</div>
+
+<!-- 窗口标题栏 -->
+<div class="winchrome">
+  <div class="traffic"><i class="tl r"></i><i class="tl y"></i><i class="tl g"></i></div>
+  <span class="chrome-title" id="chromeTitle">夜航西飞 — Aiwli Music</span>
+  <div class="winctrl">
+    <button class="wc"><svg width="10" height="10"><path d="M0 5h10" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    <button class="wc"><svg width="10" height="10"><rect x="1.4" y="1.4" width="7.2" height="7.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+    <button class="wc x"><svg width="10" height="10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.2"/></svg></button>
+  </div>
+</div>
+
+<div class="safetop"><span id="safeTime">9:41</span><span class="only-mobile" style="gap:5px;align-items:center"><svg width="15" height="15"><use href="#i-vol"/></svg><svg width="15" height="15"><path d="M2 16h3V9H2zm5 0h3V5H7zm5 0h3V2h-3z" fill="currentColor"/></svg></span></div>
+
+<div class="app-frame">
+<div class="shell">
+
+  <!-- 侧栏 -->
+  <nav class="nav">
+    <div class="logo">
+      <div class="logo-mark">A</div>
+      <div class="logo-txt"><b>Aiwli Music</b><span>五端播放器</span></div>
+    </div>
+    <button class="nav-btn on" data-view="home"><svg><use href="#i-home"/></svg>发现</button>
+    <button class="nav-btn" data-view="search"><svg><use href="#i-search"/></svg>搜索</button>
+    <button class="nav-btn" data-view="library"><svg><use href="#i-lib"/></svg>音乐库<span class="cnt">6</span></button>
+    <button class="nav-btn" data-view="downloads"><svg><use href="#i-dl"/></svg>下载<span class="cnt">2</span></button>
+    <button class="nav-btn" data-view="sources"><svg><use href="#i-src"/></svg>音源</button>
+    <button class="nav-btn" data-view="settings"><svg><use href="#i-set"/></svg>设置</button>
+
+    <div class="nav-sec">我的歌单</div>
+    <div class="playlist-mini">
+      <div class="pl-item"><i class="pl-dot"></i>我喜欢的音乐</div>
+      <div class="pl-item"><i class="pl-dot"></i>通勤歌单</div>
+      <div class="pl-item"><i class="pl-dot"></i>深夜代码</div>
+      <div class="pl-item"><i class="pl-dot"></i>City Pop</div>
+    </div>
+
+    <div class="nav-foot">
+      <button class="cbtn" id="modeBtn" title="深浅色"><svg width="17" height="17"><use href="#i-moon"/></svg></button>
+      <button class="cbtn" id="palBtn" title="换主色"><svg width="17" height="17"><use href="#i-sun"/></svg></button>
+    </div>
+  </nav>
+
+  <!-- 内容 -->
+  <main class="content" id="content">
+
+    <!-- 首页 -->
+    <section class="view on" id="v-home">
+      <div class="wrap">
+        <div class="hero">
+          <div class="art" id="heroArt"><span class="glyph">夜航</span></div>
+          <div class="hero-body">
+            <div class="hero-tag">每日推荐 · 为你精选</div>
+            <div class="hero-title">夜航西飞</div>
+            <div class="hero-meta">陈鸿宇 · 三旬 · 2024 · 4:12</div>
+            <div class="hero-actions">
+              <button class="btn-solid" id="heroPlay"><svg width="15" height="15"><use href="#i-play"/></svg>立即播放</button>
+              <button class="btn-glass"><svg width="14" height="14"><use href="#i-heart"/></svg>收藏</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec"><h2>继续聆听</h2><span class="more">全部 ›</span></div>
+        <div class="strip">
+          <div class="tile" data-p="teal" data-t="夜航西飞" data-a="陈鸿宇 · 三旬" data-d="04:12">
+            <div class="art"><span class="glyph">夜航</span></div>
+            <button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button>
+            <div class="t-title">夜航西飞</div><div class="t-sub">陈鸿宇</div>
+          </div>
+          <div class="tile" data-p="amber" data-t="Lemon" data-a="米津玄師 · STRAY SHEEP" data-d="04:16">
+            <div class="art"><span class="glyph">LMN</span></div>
+            <button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button>
+            <div class="t-title">Lemon</div><div class="t-sub">米津玄師</div>
+          </div>
+          <div class="tile" data-p="violet" data-t="雨巷" data-a="房东的猫 · 春生" data-d="03:48">
+            <div class="art"><span class="glyph">雨巷</span></div>
+            <button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button>
+            <div class="t-title">雨巷</div><div class="t-sub">房东的猫</div>
+          </div>
+          <div class="tile" data-p="rose" data-t="温柔" data-a="五月天 · 时光机" data-d="04:31">
+            <div class="art"><span class="glyph">温柔</span></div>
+            <button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button>
+            <div class="t-title">温柔</div><div class="t-sub">五月天</div>
+          </div>
+          <div class="tile" data-p="ocean" data-t="City Pop" data-a="Plastic Love" data-d="05:02">
+            <div class="art"><span class="glyph">CITY</span></div>
+            <button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button>
+            <div class="t-title">Plastic Love</div><div class="t-sub">竹内まりや</div>
+          </div>
+        </div>
+
+        <div class="sec"><h2>今日热门</h2><span class="more">换一批 ›</span></div>
+        <div class="list" id="homeList">
+          <div class="row on" data-p="teal" data-t="夜航西飞" data-a="陈鸿宇 · 三旬" data-d="04:12" data-src="酷我">
+            <div class="r-idx"><div class="bars"><i></i><i></i><i></i><i></i></div></div>
+            <div class="art r-art"><span class="glyph" style="font-size:13px">夜</span></div>
+            <div><div class="r-name">夜航西飞</div><div class="r-meta">陈鸿宇 · 三旬</div></div>
+            <span class="r-src">酷我</span><span class="r-dur">04:12</span>
+            <button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+          <div class="row" data-p="amber" data-t="Lemon" data-a="米津玄師 · STRAY SHEEP" data-d="04:16" data-src="插件">
+            <div class="r-idx">2</div>
+            <div class="art r-art"><span class="glyph" style="font-size:11px">LMN</span></div>
+            <div><div class="r-name">Lemon</div><div class="r-meta">米津玄師 · STRAY SHEEP</div></div>
+            <span class="r-src">插件</span><span class="r-dur">04:16</span>
+            <button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+          <div class="row" data-p="violet" data-t="雨巷" data-a="房东的猫 · 春生" data-d="03:48" data-src="酷狗">
+            <div class="r-idx">3</div>
+            <div class="art r-art"><span class="glyph" style="font-size:13px">雨</span></div>
+            <div><div class="r-name">雨巷</div><div class="r-meta">房东的猫 · 春生</div></div>
+            <span class="r-src">酷狗</span><span class="r-dur">03:48</span>
+            <button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+          <div class="row" data-p="rose" data-t="温柔" data-a="五月天 · 时光机" data-d="04:31" data-src="酷我">
+            <div class="r-idx">4</div>
+            <div class="art r-art"><span class="glyph" style="font-size:13px">温</span></div>
+            <div><div class="r-name">温柔</div><div class="r-meta">五月天 · 时光机</div></div>
+            <span class="r-src">酷我</span><span class="r-dur">04:31</span>
+            <button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 搜索 -->
+    <section class="view" id="v-search">
+      <div class="wrap">
+        <h1 class="h1" style="margin-bottom:var(--sp4)">搜索</h1>
+        <div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-full);padding:12px 18px;margin-bottom:var(--sp4)">
+          <svg width="18" height="18" style="color:var(--ink2)"><use href="#i-search"/></svg>
+          <input placeholder="搜索歌曲、专辑、歌手…" value="夜航" style="flex:1;font-size:15px">
+          <button class="btn-solid" style="padding:7px 18px">搜索</button>
+        </div>
+        <div class="filter-row">
+          <button class="fchip on" data-filter="all">全部源</button>
+          <button class="fchip on" data-filter="kw">酷我</button>
+          <button class="fchip on" data-filter="kg">酷狗</button>
+          <button class="fchip" data-filter="tx">QQ音乐</button>
+          <button class="fchip on" data-filter="plugin">某插件源</button>
+        </div>
+
+        <div class="sec" style="margin-top:0"><h2>酷我</h2><span class="chip-v">12 条</span><span class="more">歌曲 · 专辑 · 歌手</span></div>
+        <div class="list" style="margin-bottom:var(--sp5)">
+          <div class="row on" data-p="teal" data-t="夜航西飞" data-a="陈鸿宇 · 三旬" data-d="04:12" data-src="320k">
+            <div class="r-idx"><div class="bars"><i></i><i></i><i></i><i></i></div></div>
+            <div class="art r-art"><span class="glyph" style="font-size:13px">夜</span></div>
+            <div><div class="r-name">夜航西飞</div><div class="r-meta">陈鸿宇 · 三旬</div></div>
+            <span class="r-src">320k</span><span class="r-dur">04:12</span><button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+          <div class="row" data-p="ocean" data-t="夜航船" data-a="刺猬 · 生之响往" data-d="03:51" data-src="flac">
+            <div class="r-idx">2</div>
+            <div class="art r-art"><span class="glyph" style="font-size:13px">船</span></div>
+            <div><div class="r-name">夜航船</div><div class="r-meta">刺猬 · 生之响往</div></div>
+            <span class="r-src">flac</span><span class="r-dur">03:51</span><button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+        </div>
+
+        <div class="sec" style="margin-top:0"><h2>某插件源</h2><span class="chip-v">3 条</span><span class="more" style="color:#F0A62E">降级中</span></div>
+        <div class="list">
+          <div class="row" data-p="violet" data-t="夜航星" data-a="原声带" data-d="04:40" data-src="flac">
+            <div class="r-idx">1</div>
+            <div class="art r-art"><span class="glyph" style="font-size:13px">星</span></div>
+            <div><div class="r-name">夜航星</div><div class="r-meta">原声带</div></div>
+            <span class="r-src">flac</span><span class="r-dur">04:40</span><button class="cbtn" style="width:28px;height:28px"><svg width="15" height="15"><use href="#i-more"/></svg></button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 音乐库 -->
+    <section class="view" id="v-library">
+      <div class="wrap">
+        <div class="head"><div><h1 class="h1">音乐库</h1><div class="h-sub">6 个歌单 · 1,284 首本地</div></div><button class="btn-solid"><svg width="14" height="14"><use href="#i-plus"/></svg>新建</button></div>
+        <div class="filter-row" style="margin-bottom:var(--sp4)">
+          <button class="fchip on">歌单</button>
+          <button class="fchip">歌手</button>
+          <button class="fchip">专辑</button>
+          <button class="fchip">文件夹</button>
+        </div>
+        <div class="grid">
+          <div class="tile" data-p="rose" data-t="我喜欢的音乐" data-a="128 首" data-d="05:20"><div class="art"><span class="glyph">♥</span></div><button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button><div class="t-title">我喜欢的音乐</div><div class="t-sub">128 首</div></div>
+          <div class="tile" data-p="teal" data-t="通勤歌单" data-a="42 首" data-d="04:00"><div class="art"><span class="glyph">通</span></div><button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button><div class="t-title">通勤歌单</div><div class="t-sub">42 首</div></div>
+          <div class="tile" data-p="violet" data-t="深夜代码" data-a="31 首" data-d="06:00"><div class="art"><span class="glyph">码</span></div><button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button><div class="t-title">深夜代码</div><div class="t-sub">31 首</div></div>
+          <div class="tile" data-p="ocean" data-t="City Pop" data-a="28 首" data-d="04:40"><div class="art"><span class="glyph">CITY</span></div><button class="tile-play"><svg width="17" height="17"><use href="#i-play"/></svg></button><div class="t-title">City Pop</div><div class="t-sub">28 首</div></div>
+        </div>
+        <div class="sec"><h2>本地曲库</h2><span class="more">重新扫描 ›</span></div>
+        <div class="sgroup" style="padding:var(--sp4)">
+          <div style="display:flex;align-items:center;gap:var(--sp3)">
+            <div class="src-ico" style="width:38px;height:38px;font-size:13px">♪</div>
+            <div style="flex:1"><div class="sl">~/Music · ~/Downloads</div><div class="sd">1,284 首 · FLAC/MP3/M4A · 2 小时前扫描</div></div>
+            <button class="btn-glass" style="background:var(--surface2);color:var(--ink);padding:7px 14px;font-size:12px">扫描</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 下载 -->
+    <section class="view" id="v-downloads">
+      <div class="wrap">
+        <div class="head"><div><h1 class="h1">下载</h1><div class="h-sub">并发 3 · 断点续传</div></div></div>
+        <div style="display:flex;gap:7px;margin-bottom:var(--sp5)">
+          <span class="r-src" style="background:var(--accent);color:var(--accent-ink);font-weight:700">下载中 2</span>
+          <span class="r-src">已完成 15</span><span class="r-src">失败 1</span>
+        </div>
+        <div class="sgroup" style="padding:var(--sp4)">
+          <div style="margin-bottom:var(--sp4)">
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <div class="sl">夜航西飞 <span class="chip-v">320k</span></div><div class="sd" style="font-variant-numeric:tabular-nums">62%</div>
+            </div>
+            <div class="seek" style="height:3px"><div class="seek-fill" style="width:62%"></div></div>
+            <div class="sd" style="margin-top:7px">陈鸿宇 · 1.8 MB/s · 剩余 00:12</div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:8px">
+              <div class="sl">Lemon <span class="chip-v">flac</span></div><div class="sd" style="font-variant-numeric:tabular-nums">28%</div>
+            </div>
+            <div class="seek" style="height:3px"><div class="seek-fill" style="width:28%"></div></div>
+            <div class="sd" style="margin-top:7px">米津玄師 · 940 KB/s · 剩余 01:34</div>
+          </div>
+        </div>
+        <div class="sgroup" style="padding:var(--sp4);border-color:#E4574B">
+          <div style="display:flex;align-items:center;gap:var(--sp3)">
+            <i class="dot bad"></i>
+            <div style="flex:1"><div class="sl">雨巷</div><div class="sd" style="color:#E4574B">链接已失效（403）· 可重新获取</div></div>
+            <button class="btn-glass" style="background:var(--surface2);color:var(--ink);padding:6px 14px;font-size:12px">重试</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 音源 -->
+    <section class="view" id="v-sources">
+      <div class="wrap">
+        <div class="head"><div><h1 class="h1">音源</h1><div class="h-sub">能力位决定界面：脚本只能播放，插件全能力</div></div><button class="btn-solid"><svg width="14" height="14"><use href="#i-plus"/></svg>导入</button></div>
+
+        <div class="src">
+          <div class="src-h">
+            <div class="src-ico">酷</div>
+            <div style="flex:1;min-width:0">
+              <div class="src-n">酷我 · 增强版 <span class="chip-v">v2.1</span></div>
+              <div class="src-m"><i class="dot ok"></i>健康 · lx 脚本 · 检测于 2 分钟前</div>
+            </div>
+            <div class="sw on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="caps"><span class="cap n">搜索</span><span class="cap n">专辑</span><span class="cap n">歌手</span><span class="cap y">播放</span><span class="cap n">歌词</span><span class="cap n">封面</span></div>
+        </div>
+
+        <div class="src">
+          <div class="src-h">
+            <div class="src-ico">M</div>
+            <div style="flex:1;min-width:0">
+              <div class="src-n">某 MusicFree 插件 <span class="chip-v">v1.4.2</span></div>
+              <div class="src-m"><i class="dot warn"></i>降级（连续 3 次失败）· MusicFree 插件</div>
+            </div>
+            <div class="sw on" onclick="this.classList.toggle('on')"></div>
+          </div>
+          <div class="caps"><span class="cap y">搜索</span><span class="cap y">专辑</span><span class="cap y">歌手</span><span class="cap y">播放</span><span class="cap y">歌词</span><span class="cap y">封面</span><span class="cap y">榜单</span></div>
+        </div>
+
+        <div class="src" style="opacity:.62">
+          <div class="src-h">
+            <div class="src-ico">Q</div>
+            <div style="flex:1;min-width:0">
+              <div class="src-n">QQ音乐脚本 <span class="chip-v">v1.0</span></div>
+              <div class="src-m"><i class="dot bad"></i>失效 · 初始化超时 · 查看日志</div>
+            </div>
+            <div class="sw"></div>
+          </div>
+          <div class="caps"><span class="cap n">搜索</span><span class="cap y">播放</span><span class="cap n">歌词</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="view" id="v-settings">
+      <div class="wrap">
+        <h1 class="h1" style="margin-bottom:var(--sp5)">设置</h1>
+        <div class="sgroup only-mobile" style="padding:0">
+          <div class="srow" onclick="go('sources')" style="cursor:pointer">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div class="src-ico" style="width:34px;height:34px;font-size:13px">源</div>
+              <div><div class="sl">音源管理</div><div class="sd">3 个源 · 1 个降级</div></div>
+            </div>
+            <div class="sv">›</div>
+          </div>
+        </div>
+        <div class="sgroup">
+          <div class="srow">
+            <div><div class="sl">主色调</div><div class="sd">跟随当前封面自动提取</div></div>
+            <div class="swatches">
+              <button class="swatch on" data-p="teal" style="background:linear-gradient(140deg,#1D6B62,#5FC9B6)"></button>
+              <button class="swatch" data-p="amber" style="background:linear-gradient(140deg,#8A5100,#F0A94C)"></button>
+              <button class="swatch" data-p="violet" style="background:linear-gradient(140deg,#4A3A9E,#A99AF0)"></button>
+              <button class="swatch" data-p="rose" style="background:linear-gradient(140deg,#8C3350,#EE8BA8)"></button>
+              <button class="swatch" data-p="ocean" style="background:linear-gradient(140deg,#0C5273,#54B4D8)"></button>
+            </div>
+          </div>
+          <div class="srow"><div><div class="sl">深色模式</div></div><div class="sw on" id="modeSw"></div></div>
+          <div class="srow"><div><div class="sl">封面形状</div><div class="sd">播放页与列表</div></div><div class="sv">方形 ›</div></div>
+        </div>
+        <div class="sgroup">
+          <div class="srow"><div><div class="sl">音质偏好</div></div><div class="sv">最高可用 ›</div></div>
+          <div class="srow"><div><div class="sl">播放失败自动换源</div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+        </div>
+        <div class="sgroup only-desktop">
+          <div class="srow"><div><div class="sl">桌面歌词</div><div class="sd">独立窗口 · 置顶 · 可拖动</div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+          <div class="srow"><div><div class="sl">应用内快捷键</div></div><div class="sv" id="scVal">Space 播放 · ←→ 快进退 · ↑↓ 音量</div></div>
+          <div class="srow"><div><div class="sl">关闭窗口时</div></div><div class="sv">最小化到托盘 ›</div></div>
+        </div>
+        <div class="sgroup only-mobile">
+          <div class="srow"><div><div class="sl">允许与其他应用混音</div></div><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+          <div class="srow"><div><div class="sl">拔耳机时暂停</div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 右侧常驻播放面板 -->
+  <aside class="nowpanel">
+    <div class="np-top">
+      <span class="np-label">正在播放</span>
+      <div style="display:flex;gap:2px">
+        <button class="cbtn" id="vinylBtn" title="唱片模式" style="width:30px;height:30px"><svg width="16" height="16"><use href="#i-cd"/></svg></button>
+        <button class="cbtn" id="queueBtn" title="队列" style="width:30px;height:30px"><svg width="16" height="16"><use href="#i-queue"/></svg></button>
+      </div>
+    </div>
+
+    <div class="np-art-wrap">
+      <div class="art np-art" id="npArt"><span class="glyph">夜航</span></div>
+    </div>
+
+    <div class="np-meta">
+      <div class="np-song" id="npSong">夜航西飞</div>
+      <div class="np-artist" id="npArtist">陈鸿宇 · 三旬</div>
+    </div>
+
+    <div class="np-prog">
+      <div class="seek" id="seek"><div class="seek-fill" id="seekFill"></div></div>
+      <div class="np-times"><span id="tCur">01:22</span><span id="tDur">04:12</span></div>
+    </div>
+
+    <div class="np-ctrl">
+      <button class="cbtn on" id="shufBtn"><svg width="16" height="16"><use href="#i-shuffle"/></svg></button>
+      <button class="cbtn" id="prevBtn" title="上一首"><svg width="18" height="18"><use href="#i-prev"/></svg></button>
+      <button class="cbtn main" id="playBtn"><svg width="20" height="20"><use href="#i-pause"/></svg></button>
+      <button class="cbtn" id="nextBtn" title="下一首"><svg width="18" height="18"><use href="#i-next"/></svg></button>
+      <button class="cbtn" id="repBtn"><svg width="16" height="16"><use href="#i-repeat"/></svg></button>
+    </div>
+
+    <!-- 单行 tab：歌词 / 评论。评论内部用「热门·最新」内联切换，不做二级 tab -->
+    <div class="np-tabs">
+      <button class="np-tab on" data-pane="lyric">歌词</button>
+      <button class="np-tab" data-pane="comment">评论<span class="n" id="cmtTotal">1,284</span></button>
+    </div>
+
+    <div class="pane on" id="pane-lyric">
+      <div class="np-lyric" style="padding-top:0">
+        <div class="ly-view" id="lyView">
+          <div class="ly tr">chi yo to ma ga sa xi ta n da</div>
+          <div class="ly">ちょっと魔がさしたんだ</div>
+          <div class="ly tr">我是有点鬼迷心窍了</div>
+          <div class="ly on">夜航西飞，穿过云层</div>
+          <div class="ly tr">we're drifting through the midnight sky</div>
+          <div class="ly">所有的灯火都在脚下沉默</div>
+          <div class="ly">而我忘了重力的重量</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-comment">
+      <!-- 内联切换：文字按钮，不是第二层 tab -->
+      <div class="cmt-switch">
+        <button class="cs on" data-ctab="hot">热门 <b id="hotN">860</b></button>
+        <span class="cs-sep">·</span>
+        <button class="cs" data-ctab="new">最新 <b id="newN">1,284</b></button>
+      </div>
+      <div class="cmt-scroll" id="cmtScroll"></div>
+      <div class="cmt-pager" id="cmtPager"></div>
+    </div>
+
+    <div class="np-extra">
+      <button class="cbtn" id="favBtn" style="width:34px;height:34px;color:var(--ink2)"><svg width="17" height="17"><use href="#i-heart"/></svg></button>
+      <button class="cbtn" id="muteBtn" style="width:30px;height:30px"><svg width="16" height="16"><use href="#i-vol"/></svg></button>
+      <div class="vol-slider" id="volSlider"><i id="volFill" style="width:70%"></i></div>
+      <button class="cbtn" id="expandBtn" style="width:34px;height:34px;margin-left:auto"><svg width="17" height="17"><use href="#i-more"/></svg></button>
+    </div>
+  </aside>
+</div>
+
+<!-- 迷你播放条（移动） -->
+<div class="mini" id="mini">
+  <div class="mini-prog"><i id="miniFill"></i></div>
+  <div class="art" id="miniArt"><span class="glyph" style="font-size:10px">夜</span></div>
+  <div class="mini-txt"><div class="mini-t" id="miniT">夜航西飞</div><div class="mini-a" id="miniA">陈鸿宇 · 三旬</div></div>
+  <button class="cbtn" id="miniPlay"><svg width="20" height="20"><use href="#i-pause"/></svg></button>
+  <button class="cbtn" id="miniNext"><svg width="18" height="18"><use href="#i-next"/></svg></button>
+</div>
+
+<!-- 底部 Tab（移动） -->
+<div class="tabbar">
+  <button class="tab on" data-view="home"><svg><use href="#i-home"/></svg>发现</button>
+  <button class="tab" data-view="search"><svg><use href="#i-search"/></svg>搜索</button>
+  <button class="tab" data-view="library"><svg><use href="#i-lib"/></svg>音乐库</button>
+  <button class="tab" data-view="downloads"><svg><use href="#i-dl"/></svg>下载</button>
+  <button class="tab" data-view="settings"><svg><use href="#i-set"/></svg>设置</button>
+</div>
+</div>
+
+<div class="safebot"></div>
+
+<!-- 全屏播放器 -->
+<div class="fullplay" id="fullplay">
+  <div class="fp-drag"><i></i></div>
+  <div class="fp-head">
+    <button class="cbtn" id="fpClose"><svg width="22" height="22"><use href="#i-down"/></svg></button>
+    <span class="chip-v" id="fpSrc">酷我 · flac</span>
+    <button class="cbtn"><svg width="18" height="18"><use href="#i-more"/></svg></button>
+  </div>
+  <div class="fp-body">
+    <div class="fp-art"><div class="art" id="fpArt"><span class="glyph">夜航</span></div></div>
+    <div style="height:100%;display:flex;flex-direction:column;min-height:0">
+      <div class="fp-tabs">
+        <button class="fp-tab on" data-fpane="lyric">歌词</button>
+        <button class="fp-tab" data-fpane="comment">评论</button>
+      </div>
+      <div class="fp-pane on" id="fp-pane-lyric">
+        <div class="fp-lyr">
+          <div class="ly-view" id="fpLy">
+            <div class="fp-lyq"><div class="sub">chi yo to ma ga sa xi ta n da</div>ちょっと魔がさしたんだ</div>
+            <div class="fp-lyq on"><div class="sub">we're drifting through the midnight sky</div><span class="hl">夜</span><span class="hl">航</span><span class="hl">西</span><span class="hl">飞</span>，穿过云层</div>
+            <div class="fp-lyq">所有的灯火都在脚下沉默</div>
+            <div class="fp-lyq">而我忘了重力的重量</div>
+          </div>
+        </div>
+      </div>
+      <div class="fp-pane" id="fp-pane-comment">
+        <div class="fp-cmt" id="fpCmt"></div>
+      </div>
+    </div>
+  </div>
+  <div class="fp-foot">
+    <div class="fp-title"><div class="fp-song" id="fpSong">夜航西飞</div><div class="fp-artist" id="fpArtist">陈鸿宇 · 三旬</div></div>
+    <div class="seek" id="fpSeek" style="height:5px"><div class="seek-fill" id="fpFill"></div></div>
+    <div class="np-times" style="padding:0 2px"><span id="fpCur">01:22</span><span id="fpDur">04:12</span></div>
+    <div class="fp-row">
+      <button class="cbtn"><svg width="16" height="16"><use href="#i-shuffle"/></svg></button>
+      <button class="cbtn" id="fpPrev"><svg width="20" height="20"><use href="#i-prev"/></svg></button>
+      <button class="cbtn main" id="fpPlay"><svg width="22" height="22"><use href="#i-pause"/></svg></button>
+      <button class="cbtn" id="fpNext"><svg width="20" height="20"><use href="#i-next"/></svg></button>
+      <button class="cbtn"><svg width="16" height="16"><use href="#i-repeat"/></svg></button>
+    </div>
+  </div>
+</div>
+
+<!-- 队列抽屉 -->
+<div class="scrim" id="scrim"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-head"><b>播放队列</b><button class="cbtn" id="drawerClose"><svg width="18" height="18"><use href="#i-close"/></svg></button></div>
+  <div class="drawer-body" id="queueBody"></div>
+</div>
+
+<div class="stage" id="stage">
+  <button class="seg" data-platform="android">Android</button>
+  <button class="seg" data-platform="ios">iOS</button>
+  <button class="seg on" data-platform="macos">macOS</button>
+  <button class="seg" data-platform="windows">Windows</button>
+  <button class="seg" data-platform="linux">Linux</button>
+</div>
+
+<script>
+/* ================= 数据 ================= */
+const TRACKS = [
+  {t:'夜航西飞',a:'陈鸿宇 · 三旬',d:'04:12',p:'teal',g:'夜航',src:'酷我'},
+  {t:'Lemon',a:'米津玄師 · STRAY SHEEP',d:'04:16',p:'amber',g:'LMN',src:'插件'},
+  {t:'雨巷',a:'房东的猫 · 春生',d:'03:48',p:'violet',g:'雨巷',src:'酷狗'},
+  {t:'温柔',a:'五月天 · 时光机',d:'04:31',p:'rose',g:'温柔',src:'酷我'},
+  {t:'Plastic Love',a:'竹内まりや',d:'05:02',p:'ocean',g:'CITY',src:'插件'}
+];
+let cur = 0, playing = true, prog = .32;
+
+const PAL = ['teal','amber','violet','rose','ocean'];
+
+/* ================= 工具 ================= */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const secs = d => { const [m,s]=d.split(':').map(Number); return m*60+s; };
+const fmt = t => `${String(Math.floor(t/60)).padStart(2,'0')}:${String(Math.floor(t%60)).padStart(2,'0')}`;
+
+/* ================= 切换曲目 ================= */
+function setTrack(i){
+  cur = i;
+  const tr = TRACKS[i];
+  document.documentElement.dataset.palette = tr.p;   // 整页 mesh 换色
+
+  $('#npSong').textContent = tr.t;
+  $('#npArtist').textContent = tr.a;
+  $('#npArt').innerHTML = `<span class="glyph">${tr.g}</span>`;
+  $('#heroArt').innerHTML = `<span class="glyph">${tr.g}</span>`;
+  $('#npArt').className = 'art np-art' + ($('#npArt').classList.contains('vinyl')?' vinyl spin':'');
+  $('#tDur').textContent = tr.d;
+
+  $('#fpSong').textContent = tr.t;
+  $('#fpArtist').textContent = tr.a;
+  $('#fpArt').innerHTML = `<span class="glyph">${tr.g}</span>`;
+  $('#fpArt').className = 'art' + ($('#fpArt').classList.contains('vinyl')?' vinyl spin':'');
+  $('#fpDur').textContent = tr.d;
+  $('#fpSrc').textContent = `${tr.src} · flac`;
+
+  $('#miniT').textContent = tr.t;
+  $('#miniA').textContent = tr.a;
+  $('#miniArt').innerHTML = `<span class="glyph" style="font-size:10px">${tr.g[0]}</span>`;
+
+  $('#chromeTitle').textContent = `${tr.t} — Aiwli Music`;
+  prog = 0; paint();
+
+  /* 评论随曲目重置：每首歌有自己的评论数据 */
+  loadCommentsFor(i);
+}
+
+/* ================= 进度绘制 ================= */
+function paint(){
+  const pct = (prog*100).toFixed(2)+'%';
+  $('#seekFill').style.width = pct;
+  $('#fpFill').style.width = pct;
+  $('#miniFill').style.width = pct;
+  const d = secs(TRACKS[cur].d);
+  const t = fmt(prog*d);
+  $('#tCur').textContent = t; $('#fpCur').textContent = t;
+
+  // 歌词跟随
+  const lines = $$('#lyView .ly.on, #lyView .ly');
+  const all = $$('#lyView .ly');
+  const idx = Math.min(all.length-1, Math.floor(prog*all.length));
+  all.forEach((l,i)=>l.classList.toggle('on', i===idx && !l.classList.contains('tr')));
+  $('#lyView').style.transform = `translateY(-${Math.max(0, idx-2)*4}px)`;
+}
+
+let timer = null;
+function startLoop(){
+  stopLoop();
+  timer = setInterval(()=>{ prog = (prog + .0034) % 1; paint(); }, 240);
+}
+function stopLoop(){ if(timer){clearInterval(timer); timer=null;} }
+
+/* ================= 播放/暂停 ================= */
+function toggle(){
+  playing = !playing;
+  const ic = playing ? '#i-pause' : '#i-play';
+  $('#playBtn').innerHTML = `<svg width="20" height="20"><use href="${ic}"/></svg>`;
+  $('#fpPlay').innerHTML = `<svg width="22" height="22"><use href="${ic}"/></svg>`;
+  $('#miniPlay').innerHTML = `<svg width="20" height="20"><use href="${ic}"/></svg>`;
+  $$('.row').forEach(r=>r.classList.toggle('paused', !playing));
+  const vinyl = $('#npArt');
+  if(playing){ vinyl.classList.add('spin'); startLoop(); }
+  else { vinyl.classList.remove('spin'); stopLoop(); }
+}
+$('#playBtn').onclick = toggle;
+$('#fpPlay').onclick = toggle;
+$('#miniPlay').onclick = toggle;
+$('#heroPlay').onclick = ()=>{ if(!playing) toggle(); };
+startLoop();
+
+/* ================= 视图切换 ================= */
+function go(view){
+  $$('.view').forEach(v=>v.classList.toggle('on', v.id === 'v-'+view));
+  $$('.nav-btn').forEach(b=>b.classList.toggle('on', b.dataset.view===view));
+  $$('.tab').forEach(b=>b.classList.toggle('on', b.dataset.view===view));
+  $('#content').scrollTop = 0;
+}
+$$('.nav-btn').forEach(b=> b.onclick = ()=> go(b.dataset.view));
+$$('.tab').forEach(b=> b.onclick = ()=> go(b.dataset.view));
+
+/* ================= 点歌 ================= */
+$$('.row').forEach(r=>{
+  r.onclick = ()=>{
+    const i = TRACKS.findIndex(x=>x.t === r.dataset.t);
+    if(i>=0){ setTrack(i); if(!playing) toggle(); }
+  };
+});
+$$('.tile').forEach(t=>{
+  t.onclick = ()=>{
+    const i = TRACKS.findIndex(x=>x.t === t.dataset.t);
+    if(i>=0){ setTrack(i); if(!playing) toggle(); }
+    else { setTrack(0); }
+  };
+});
+
+/* ================= 进度拖拽 ================= */
+function bindSeek(el){
+  let drag = false;
+  const set = e => {
+    const r = el.getBoundingClientRect();
+    prog = Math.min(Math.max((e.clientX - r.left)/r.width, 0), 1);
+    paint();
+  };
+  el.addEventListener('pointerdown', e=>{drag=true; set(e);});
+  window.addEventListener('pointermove', e=>{ if(drag) set(e); });
+  window.addEventListener('pointerup', ()=>drag=false);
+}
+bindSeek($('#seek')); bindSeek($('#fpSeek'));
+
+/* ================= 全屏播放器 ================= */
+$('#mini').onclick = e => { if(e.target.closest('#miniPlay')) return; $('#fullplay').classList.add('open'); };
+$('#expandBtn').onclick = ()=> $('#fullplay').classList.add('open');
+$('#fpClose').onclick = ()=> $('#fullplay').classList.remove('open');
+$('#npArt').onclick = ()=> $('#fullplay').classList.add('open');
+
+/* ================= 唱片模式 ================= */
+$('#vinylBtn').onclick = ()=>{
+  const a = $('#npArt'), f = $('#fpArt');
+  const on = !a.classList.contains('vinyl');
+  [a,f].forEach(el=>{
+    el.classList.toggle('vinyl', on);
+    el.classList.toggle('spin', on && playing);
+  });
+  $('#vinylBtn').classList.toggle('on', on);
+};
+
+/* ================= 队列 ================= */
+function buildQueue(){
+  $('#queueBody').innerHTML = TRACKS.map((t,i)=>`
+    <div class="q-item ${i===cur?'on':''}" data-i="${i}">
+      <div class="art" style="--c1:${'var(--c1)'};--c2:var(--c2)"><span class="glyph" style="font-size:9px">${t.g[0]}</span></div>
+      <div style="flex:1;min-width:0"><div class="q-t">${t.t}</div><div class="q-a">${t.a}</div></div>
+      <span class="chip-v">${t.d}</span>
+    </div>`).join('');
+  $$('.q-item').forEach(el=> el.onclick = ()=>{ setTrack(+el.dataset.i); buildQueue(); });
+}
+$('#queueBtn').onclick = ()=>{ buildQueue(); $('#drawer').classList.add('open'); $('#scrim').classList.add('on'); };
+$('#drawerClose').onclick = closeDrawer;
+$('#scrim').onclick = closeDrawer;
+function closeDrawer(){
+  $('#drawer').classList.remove('open'); $('#scrim').classList.remove('on');
+}
+
+/* ================= 收藏 / 随机 / 循环 ================= */
+$('#favBtn').onclick = function(){ this.classList.toggle('on'); this.style.color = this.classList.contains('on') ? '#EF5B7E' : 'var(--ink2)'; };
+$('#shufBtn').onclick = function(){ this.classList.toggle('on'); };
+$('#repBtn').onclick = function(){ this.classList.toggle('on'); };
+
+/* ================= 主题 ================= */
+function setPalette(p){
+  document.documentElement.dataset.palette = p;
+  $$('.swatch').forEach(s=> s.classList.toggle('on', s.dataset.p===p));
+}
+$$('.swatch').forEach(s=> s.onclick = ()=> setPalette(s.dataset.p));
+$('#palBtn').onclick = ()=>{
+  const curp = document.documentElement.dataset.palette;
+  setPalette(PAL[(PAL.indexOf(curp)+1) % PAL.length]);
+};
+function toggleMode(){
+  const dark = document.documentElement.dataset.mode === 'dark';
+  document.documentElement.dataset.mode = dark ? 'light' : 'dark';
+  $('#modeSw').classList.toggle('on', !dark);
+  $('#modeBtn').innerHTML = dark
+    ? `<svg width="17" height="17"><use href="#i-moon"/></svg>`
+    : `<svg width="17" height="17"><use href="#i-sun"/></svg>`;
+}
+$('#modeBtn').onclick = toggleMode;
+$('#modeSw').onclick = toggleMode;
+
+/* ================= 五端切换 ================= */
+const PLAT = {
+  android:{w:412,h:915,shortcut:'Ctrl',mode:'light'},
+  ios:{w:393,h:852,shortcut:'⌘',mode:'light'},
+  macos:{w:1280,h:820,shortcut:'⌘',mode:'dark'},
+  windows:{w:1280,h:820,shortcut:'Ctrl',mode:'dark'},
+  linux:{w:1280,h:820,shortcut:'Ctrl',mode:'dark'}
+};
+function applyPlatform(k){
+  const p = PLAT[k];
+  const layout = p.w < 600 ? 'mobile' : 'desktop';
+  document.documentElement.dataset.platform = k;
+  document.documentElement.dataset.layout = layout;
+  document.body.dataset.platform = k;
+  document.body.dataset.layout = layout;
+
+  const frame = document.querySelector('.app-frame');
+  if(layout === 'mobile'){
+    frame.style.maxWidth = p.w + 'px';
+    frame.style.height = (window.innerHeight - 28) + 'px';
+  } else {
+    frame.style.maxWidth = '';
+    frame.style.height = 'auto';
+  }
+
+  if(p.mode && document.documentElement.dataset.mode !== p.mode){
+    document.documentElement.dataset.mode = p.mode;
+    $('#modeSw').classList.toggle('on', p.mode==='dark');
+    $('#modeBtn').innerHTML = p.mode==='dark'
+      ? `<svg width="17" height="17"><use href="#i-moon"/></svg>`
+      : `<svg width="17" height="17"><use href="#i-sun"/></svg>`;
+  }
+
+  const sc = $('#scVal');
+  if(sc) sc.textContent = `${p.shortcut}${p.shortcut==='⌘'?'⌥':'+Alt+'}Space 播放/暂停`;
+
+  $('#safeTime').textContent = '9:41';
+  $$('.seg').forEach(s=> s.classList.toggle('on', s.dataset.platform===k));
+}
+$$('.seg').forEach(s=> s.onclick = ()=> applyPlatform(s.dataset.platform));
+
+/* ================= 涟漪（Android） ================= */
+document.addEventListener('pointerdown', e=>{
+  if(document.body.dataset.platform !== 'android') return;
+  const host = e.target.closest('.row, .tile, .nav-btn, .tab, .src');
+  if(!host) return;
+  if(getComputedStyle(host).position === 'static') host.style.position = 'relative';
+  const r = host.getBoundingClientRect();
+  const d = Math.max(r.width, r.height) * 1.4;
+  const el = document.createElement('span');
+  el.className = 'rp';
+  el.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX-r.left-d/2}px;top:${e.clientY-r.top-d/2}px`;
+  host.appendChild(el);
+  setTimeout(()=>el.remove(), 520);
+});
+
+/* ================= 搜索筛选：真的过滤分组 ================= */
+(function bindFilters(){
+  const groups = () => [...document.querySelectorAll('#v-search .sec')].map(sec => {
+    const list = sec.nextElementSibling;
+    return { sec, list };
+  });
+  document.querySelectorAll('.fchip').forEach(btn => {
+    btn.onclick = () => {
+      const all = btn.dataset.filter === 'all';
+      if(all){
+        const turnOn = !btn.classList.contains('on');
+        document.querySelectorAll('.fchip').forEach(b => b.classList.toggle('on', turnOn));
+        btn.classList.toggle('on', turnOn);
+      } else {
+        btn.classList.toggle('on');
+        const anyOn = [...document.querySelectorAll('.fchip:not([data-filter="all"])')].some(b=>b.classList.contains('on'));
+        document.querySelector('.fchip[data-filter="all"]').classList.toggle('on', anyOn);
+      }
+      applyFilter();
+    };
+  });
+
+  function applyFilter(){
+    const on = new Set([...document.querySelectorAll('.fchip.on:not([data-filter="all"])')]
+      .map(b => b.querySelector ? b.dataset.filter : null));
+    const allOn = document.querySelector('.fchip[data-filter="all"]').classList.contains('on');
+
+    document.querySelectorAll('#v-search .src-group').forEach(g => {
+      const key = g.dataset.key;
+      const show = allOn ? [...document.querySelectorAll('.fchip.on:not([data-filter="all"])')].length === 0 || on.has(key) : on.has(key);
+      g.style.display = show ? '' : 'none';
+    });
+  }
+
+  // 给搜索页两个分组加 key
+  document.querySelectorAll('#v-search .sec').forEach((sec, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'src-group';
+    wrap.dataset.key = i === 0 ? 'kw' : 'plugin';
+    sec.parentNode.insertBefore(wrap, sec);
+    wrap.appendChild(sec);
+    if(sec.nextElementSibling) wrap.appendChild(sec.nextElementSibling);
+  });
+})();
+
+/* ================= 封面形状：设置项真实生效 ================= */
+let artShape = 'square';
+(function bindShape(){
+  const row = [...document.querySelectorAll('#v-settings .srow')]
+    .find(r => r.textContent.includes('封面形状'));
+  if(!row) return;
+  const val = row.querySelector('.sv');
+  val.style.cursor = 'pointer';
+  val.onclick = () => {
+    artShape = artShape === 'square' ? 'round' : 'square';
+    val.textContent = (artShape === 'square' ? '方形' : '圆形') + ' ›';
+    applyShape();
+  };
+})();
+function applyShape(){
+  const round = artShape === 'round';
+  ['#npArt', '#fpArt'].forEach(sel => {
+    const el = document.querySelector(sel);
+    if(!el) return;
+    el.classList.toggle('vinyl', round);
+    el.classList.toggle('spin', round && playing);
+  });
+  document.querySelectorAll('#v-home .row .art, .tile .art').forEach(el => {
+    el.style.borderRadius = round ? '50%' : '';
+  });
+  const vb = $('#vinylBtn');
+  if(vb) vb.classList.toggle('on', round);
+}
+
+/* 唱片按钮与设置项保持同步 */
+const _oldVinyl = $('#vinylBtn').onclick;
+$('#vinylBtn').onclick = () => {
+  artShape = artShape === 'square' ? 'round' : 'square';
+  applyShape();
+  const row = [...document.querySelectorAll('#v-settings .srow')]
+    .find(r => r.textContent.includes('封面形状'));
+  if(row) row.querySelector('.sv').textContent = (artShape === 'square' ? '方形' : '圆形') + ' ›';
+};
+
+/* ================= 上一首 / 下一首 ================= */
+function step(delta){
+  const n = TRACKS.length;
+  const next = (cur + delta + n) % n;
+  setTrack(next);
+  if(!playing) toggle();
+}
+$('#prevBtn').onclick = ()=> step(-1);
+$('#nextBtn').onclick = ()=> step(1);
+$('#fpPrev').onclick  = ()=> step(-1);
+$('#fpNext').onclick  = ()=> step(1);
+$('#miniNext').onclick = e => { e.stopPropagation(); step(1); };
+
+/* ================= 音量 ================= */
+let volume = .7, lastVol = .7;
+function paintVol(){
+  $('#volFill').style.width = (volume*100) + '%';
+  const muted = volume === 0;
+  $('#muteBtn').style.color = muted ? 'var(--ink3)' : 'var(--ink2)';
+  $('#muteBtn').innerHTML = muted
+    ? `<svg width="16" height="16"><path d="M3 9v6h4l5 5V4L7 9zm13.6 6.2 1.4-1.4L15.4 11l2.6-2.8-1.4-1.4L14 9.6 11.4 7 10 8.4 12.6 11 10 13.8 11.4 15.2 14 12.6z" fill="currentColor"/></svg>`
+    : `<svg width="16" height="16"><use href="#i-vol"/></svg>`;
+}
+$('#muteBtn').onclick = ()=>{
+  if(volume > 0){ lastVol = volume; volume = 0; }
+  else { volume = lastVol || .7; }
+  paintVol();
+};
+(function bindVol(){
+  const el = $('#volSlider');
+  let drag = false;
+  const set = e => {
+    const r = el.getBoundingClientRect();
+    volume = Math.min(Math.max((e.clientX - r.left)/r.width, 0), 1);
+    paintVol();
+  };
+  el.addEventListener('pointerdown', e=>{ drag=true; set(e); e.stopPropagation(); });
+  window.addEventListener('pointermove', e=>{ if(drag) set(e); });
+  window.addEventListener('pointerup', ()=> drag=false);
+  paintVol();
+})();
+
+/* ================= 右键菜单（桌面） ================= */
+const MENU_ITEMS = [
+  {k:'play',   t:'播放',        ico:'#i-play'},
+  {k:'next',   t:'下一首播放',  ico:'#i-next'},
+  {k:'queue',  t:'添加到队列',  ico:'#i-queue'},
+  {sep:true},
+  {k:'fav',    t:'收藏',        ico:'#i-heart'},
+  {k:'dl',     t:'下载',        ico:'#i-dl'},
+  {sep:true},
+  {k:'copy',   t:'复制歌曲信息'},
+  {k:'src',    t:'查看音源'},
+];
+
+const ctx = document.createElement('div');
+ctx.className = 'ctxmenu';
+ctx.innerHTML = MENU_ITEMS.map(m => m.sep
+  ? '<div class="ctx-sep"></div>'
+  : `<button class="ctx-item" data-k="${m.k}">${m.ico?`<svg width="14" height="14"><use href="${m.ico}"/></svg>`:'<span style="width:14px"></span>'}${m.t}</button>`
+).join('');
+document.body.appendChild(ctx);
+
+let ctxTarget = null;
+function openCtx(x, y, target){
+  ctxTarget = target;
+  ctx.classList.add('on');
+  const r = ctx.getBoundingClientRect();
+  const maxX = window.innerWidth - r.width - 8;
+  const maxY = window.innerHeight - r.height - 8;
+  ctx.style.left = Math.min(x, maxX) + 'px';
+  ctx.style.top  = Math.min(y, maxY) + 'px';
+}
+function closeCtx(){ ctx.classList.remove('on'); }
+
+ctx.addEventListener('click', e=>{
+  const b = e.target.closest('.ctx-item');
+  if(!b) return;
+  const k = b.dataset.k;
+  if(k==='play' && ctxTarget){ ctxTarget.click(); }
+  if(k==='next'){ step(1); }
+  if(k==='fav'){ const f=$('#favBtn'); f.click(); }
+  if(k==='queue'){ buildQueue(); $('#drawer').classList.add('open'); $('#scrim').classList.add('on'); }
+  closeCtx();
+});
+document.addEventListener('click', e=>{ if(!ctx.contains(e.target)) closeCtx(); });
+document.addEventListener('scroll', closeCtx, true);
+
+/* 桌面右键 / 移动长按 */
+document.addEventListener('contextmenu', e=>{
+  if(document.documentElement.dataset.layout === 'mobile') return;
+  const row = e.target.closest('.row');
+  if(!row) return;
+  e.preventDefault();
+  openCtx(e.clientX, e.clientY, row);
+});
+let pressTimer = null;
+document.addEventListener('pointerdown', e=>{
+  if(document.documentElement.dataset.layout !== 'mobile') return;
+  const row = e.target.closest('.row');
+  if(!row) return;
+  pressTimer = setTimeout(()=>{
+    const r = row.getBoundingClientRect();
+    openCtx(r.left + 20, r.bottom - 10, row);
+    if(navigator.vibrate) navigator.vibrate(12);
+  }, 480);
+});
+document.addEventListener('pointerup', ()=>{ clearTimeout(pressTimer); });
+document.addEventListener('pointercancel', ()=>{ clearTimeout(pressTimer); });
+
+/* ================= 评论（lx 结构） ================= */
+/* 每首歌独立的评论池（演示：按曲目索引生成不同内容） */
+const COMMENT_SEEDS = [
+  { hot:[
+      {n:'听风的人',t:'凌晨三点听这首，窗外刚好有飞机飞过。',time:'2 小时前',like:328,loc:'北京',replies:[{n:'夜航员',t:'同款场景，连飞机声都一样。',time:'1 小时前',like:42}]},
+      {n:'Aki',t:'陈鸿宇的词总有一种在路上的钝感，不急着抵达。',time:'5 小时前',like:214},
+      {n:'南方的猫',t:'这张专辑循环了三年，每次听都能捞出不同的东西。',time:'昨天',like:189,loc:'广州',replies:[{n:'旧磁带',t:'三年说明你还没走出来哈哈',time:'昨天',like:31},{n:'南方的猫',t:'是走不出来了',time:'昨天',like:57}]},
+      {n:'1234',t:'前奏一起来就绷不住了。',time:'2 天前',like:96},
+      {n:'沉默的贝斯',t:'编曲很克制，鼓点一进来空间感就出来了。',time:'3 天前',like:74,loc:'成都'}],
+    new:[
+      {n:'刚下飞机',t:'落地开手机第一件事就是放这首。',time:'3 分钟前',like:2},
+      {n:'Lemon_Tea',t:'今天下雨，配这首刚好。',time:'12 分钟前',like:5,loc:'杭州'},
+      {n:'大橙子',t:'推荐给了同事，他也循环上了。',time:'28 分钟前',like:1}] },
+  { hot:[
+      {n:'八爷粉',t:'Lemon 的前奏一响，整个夏天就回来了。',time:'1 天前',like:1204,loc:'东京'},
+      {n:'日剧控',t:'《非自然死亡》OST，听到就想哭。',time:'2 天前',like:876,replies:[{n:'法医小林',t:'同感，特别是那句「今でもあなたはわたしの光」',time:'1 天前',like:112}]},
+      {n:'米津本人',t:'编曲层次太丰富了，每次听都有新发现。',time:'3 天前',like:433}],
+    new:[
+      {n:'刚入坑',t:'第一次听就单曲循环了。',time:'5 分钟前',like:3},
+      {n:'充电头',t:'副歌部分的弦乐太顶了。',time:'1 小时前',like:12}] },
+  { hot:[
+      {n:'巷口的风',t:'房东的猫的声音像雨后青石板。',time:'4 小时前',like:512,loc:'苏州'},
+      {n:'南方姑娘',t:'第一次听是在一个下雨的下午，从此记住了。',time:'昨天',like:289}],
+    new:[
+      {n:'路人甲',t:'刚刚在便利店听到，来搜的。',time:'8 分钟前',like:1},
+      {n:'夜跑者',t:'跑步歌单必备。',time:'2 小时前',like:7}] },
+  { hot:[
+      {n:'五月天老粉',t:'温柔这首歌，20 年了还是会起鸡皮疙瘩。',time:'6 小时前',like:2103,loc:'台北'},
+      {n:'吉他手',t:'前奏那几个和弦是青春本身。',time:'1 天前',like:876,replies:[{n:'贝斯手',t:'阿信写的词太会了',time:'1 天前',like:66}]}],
+    new:[
+      {n:'新粉',t:'刚听完现场版过来的。',time:'15 分钟前',like:4}] },
+  { hot:[
+      {n:'City Pop 爱好者',t:'Plastic Love 是 City Pop 的国歌。',time:'3 天前',like:1580,loc:'大阪'},
+      {n:'深夜电台',t:'适合开车夜游，城市霓虹在窗外流过。',time:'5 天前',like:632}],
+    new:[
+      {n:'复古风',t:'黑胶质感拉满。',time:'40 分钟前',like:9}] }
+];
+
+let COMMENTS = { hot:{total:0,page:1,per:20,list:[]}, new:{total:0,page:1,per:20,list:[]} };
+
+function loadCommentsFor(i){
+  const seed = COMMENT_SEEDS[i % COMMENT_SEEDS.length];
+  COMMENTS = {
+    hot: { total: seed.hot.length * 172 + 148, page:1, per:20, list: seed.hot },
+    new: { total: seed.new.length * 428 + 96,  page:1, per:20, list: seed.new }
+  };
+  cmtTab = 'hot';
+  $('#cmtScroll').scrollTop = 0;
+  paintComments();
+}
+
+let cmtTab = 'hot';
+
+function avatarTxt(name){ return (name||'?').slice(0,1).toUpperCase(); }
+
+function renderComment(c, isReply=false){
+  const replies = (c.replies && c.replies.length) ? `
+    <div class="cmt-replies">
+      ${c.replies.map(r=>`
+        <div class="cmt-reply">
+          <div class="cmt-av">${avatarTxt(r.n)}</div>
+          <div class="cmt-main">
+            <div class="cmt-top"><span class="cmt-name">${r.n}</span><span class="cmt-time">${r.time}</span></div>
+            <div class="cmt-txt">${r.t}</div>
+          </div>
+        </div>`).join('')}
+      ${c.replies.length>=2?`<div class="cmt-reply-more">展开更多回复 ›</div>`:''}
+    </div>` : '';
+
+  if(isReply) return `
+    <div class="cmt-reply">
+      <div class="cmt-av">${avatarTxt(c.n)}</div>
+      <div class="cmt-main">
+        <div class="cmt-top"><span class="cmt-name">${c.n}</span><span class="cmt-time">${c.time}</span></div>
+        <div class="cmt-txt">${c.t}</div>
+      </div>
+    </div>`;
+
+  return `
+    <div class="cmt">
+      <div class="cmt-av">${avatarTxt(c.n)}</div>
+      <div class="cmt-main">
+        <div class="cmt-top">
+          <span class="cmt-name">${c.n}</span><span class="cmt-time">${c.time}</span>
+          <span class="cmt-like" onclick="this.classList.toggle('on')">
+            <svg width="11" height="11"><use href="#i-heart"/></svg>${c.like}
+          </span>
+        </div>
+        <div class="cmt-txt">${c.t}</div>
+        ${c.loc?`<div class="cmt-loc">${c.loc}</div>`:''}
+        ${replies}
+      </div>
+    </div>`;
+}
+
+function renderPager(host, data){
+  const totalPage = Math.max(1, Math.ceil(data.total / data.per));
+  let html = `<button class="pg" ${data.page<=1?'disabled':''} data-pg="${data.page-1}">‹</button>`;
+  for(let i=1;i<=Math.min(5,totalPage);i++){
+    html += `<button class="pg ${i===data.page?'on':''}" data-pg="${i}">${i}</button>`;
+  }
+  html += `<button class="pg" ${data.page>=totalPage?'disabled':''} data-pg="${data.page+1}">›</button>`;
+  host.innerHTML = html;
+  host.querySelectorAll('.pg').forEach(b=>{
+    b.onclick = ()=>{ if(b.disabled) return; data.page = +b.dataset.pg; paintComments(); };
+  });
+}
+
+function paintComments(){
+  const d = COMMENTS[cmtTab];
+  const html = d.list.length
+    ? d.list.map(c=>renderComment(c)).join('')
+    : `<div class="cmt-empty">暂无评论</div>`;
+
+  const scroll = $('#cmtScroll');
+  if(scroll){ scroll.innerHTML = html; scroll.scrollTop = 0; }
+  renderPager($('#cmtPager'), d);
+
+  // 全屏播放器同步
+  const fp = $('#fpCmt');
+  if(fp){ fp.innerHTML = d.list.length ? d.list.map(c=>renderComment(c)).join('')
+        : `<div class="cmt-empty">暂无评论</div>`; }
+
+  $('#hotN').textContent = COMMENTS.hot.total.toLocaleString();
+  $('#newN').textContent = COMMENTS.new.total.toLocaleString();
+  $('#cmtTotal').textContent = COMMENTS.new.total.toLocaleString();
+  $$('[data-ctab]').forEach(b=> b.classList.toggle('on', b.dataset.ctab===cmtTab));
+}
+
+/* 右侧面板：歌词 / 评论 */
+$$('[data-pane]').forEach(b=>{
+  b.onclick = ()=>{
+    $$('[data-pane]').forEach(x=> x.classList.toggle('on', x===b));
+    $('#pane-lyric').classList.toggle('on', b.dataset.pane==='lyric');
+    $('#pane-comment').classList.toggle('on', b.dataset.pane==='comment');
+    if(b.dataset.pane==='comment') paintComments();
+  };
+});
+$$('[data-ctab]').forEach(b=>{
+  b.onclick = ()=>{ cmtTab = b.dataset.ctab; paintComments(); };
+});
+
+/* 全屏播放器：歌词 / 评论 */
+$$('[data-fpane]').forEach(b=>{
+  b.onclick = ()=>{
+    $$('[data-fpane]').forEach(x=> x.classList.toggle('on', x===b));
+    $('#fp-pane-lyric').classList.toggle('on', b.dataset.fpane==='lyric');
+    $('#fp-pane-comment').classList.toggle('on', b.dataset.fpane==='comment');
+    if(b.dataset.fpane==='comment') paintComments();
+    document.querySelector('.fp-art').style.display =
+      (b.dataset.fpane==='comment' && document.documentElement.dataset.layout==='mobile') ? 'none' : '';
+  };
+});
+
+paintComments();
+
+/* ================= 初始化 ================= */
+applyPlatform('macos');
+setTrack(0);   // 内部会 loadCommentsFor(0)
+playing = false; toggle();   // 先置为播放态
+</script>
+</body>
+</html>
