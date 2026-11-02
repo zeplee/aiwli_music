@@ -9,6 +9,7 @@ import '../../../core/models/music.dart';
 import '../../../core/models/quality.dart';
 import '../../../player/player_core.dart';
 import '../../../sources/builtin/builtin_search.dart';
+import '../../../sources/lx/lx_source.dart';
 import '../../../sources/registry.dart';
 import '../player/player_page.dart';
 
@@ -51,6 +52,15 @@ class _SearchPageState extends ConsumerState<SearchPage>
     if (c == null || !c.hasClients) return;
     if (c.position.maxScrollExtent - c.position.pixels > 320) return;
 
+    // 「全部」Tab：并发续载所有可加载源
+    if (sourceId == '__all__') {
+      final targets =
+          _groups.where((g) => g.canLoadMore && !g.loadingMore).toList();
+      if (targets.isEmpty) return;
+      unawaited(_loadMoreAll(targets));
+      return;
+    }
+
     final idx = _groups.indexWhere((g) => g.sourceId == sourceId);
     if (idx < 0) return;
     final g = _groups[idx];
@@ -58,6 +68,29 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
     unawaited(_loadMore(idx));
   }
+
+  /// 内容不足一屏时列表不可滚动 → 滚动监听永不触发。
+  /// 这里在每帧后检查：若该源仍可加载且内容未填满视口，则主动续载。
+  void _fillViewportIfNeeded() {
+    for (final g in _groups) {
+      if (!g.canLoadMore) continue;
+      final c = _scrollCtrls[g.sourceId];
+      if (c == null || !c.hasClients) continue;
+      if (c.position.maxScrollExtent <= 1) {
+        final idx = _groups.indexOf(g);
+        if (idx >= 0 && !_filling.contains(g.sourceId)) {
+          _filling.add(g.sourceId);
+          unawaited(_loadMore(idx).whenComplete(() {
+            _filling.remove(g.sourceId);
+          }));
+        }
+        break;
+      }
+    }
+  }
+
+  /// 正在补屏的源，防止重复触发。
+  final Set<String> _filling = {};
 
   Future<void> _loadMore(int idx) async {
     if (idx < 0 || idx >= _groups.length) return;
@@ -105,12 +138,21 @@ class _SearchPageState extends ConsumerState<SearchPage>
         setState(() => _groups = groups);
       },
     );
-    final scriptFuture = _searchScript(kw);
+    // 脚本源并发进行，完成后即时追加（不必等内置源全部结束）
+    List<SourceGroup> scriptGroups = const [];
+    final scriptFuture = _searchScript(kw).then((g) {
+      scriptGroups = g;
+      if (mounted && gen == _generation && _groups.isNotEmpty) {
+        setState(() => _groups = [..._groups, ...g]);
+      }
+      return g;
+    });
 
     try {
       final builtin = await builtinFuture;
       if (!mounted || gen != _generation) return;
-      final scriptGroups = await scriptFuture;
+      setState(() => _groups = builtin);
+      await scriptFuture;
       if (!mounted || gen != _generation) return;
 
       final all = [...builtin, ...scriptGroups];
@@ -131,23 +173,46 @@ class _SearchPageState extends ConsumerState<SearchPage>
     }
   }
 
+  /// 并发搜索所有「已启用且声明 musicSearch」的脚本/插件源。
+  /// 每个源独立成组，单源失败不影响其他源。
   Future<List<SourceGroup>> _searchScript(String kw) async {
-    final lx = ref.read(sourceRegistryProvider).activeRuntime;
-    if (lx == null) return const [];
-    try {
-      final list = await lx.searchFromScript(kw);
-      if (list == null || list.isEmpty) return const [];
-      return [
-        SourceGroup(
-          sourceId: 'script:${lx.id}',
-          label: '脚本源',
-          state: SourceSearchState.done,
-          songs: list,
-        ),
-      ];
-    } catch (_) {
-      return const [];
-    }
+    final registry = ref.read(sourceRegistryProvider);
+    final runtimes = registry.enabledRuntimes;
+    if (runtimes.isEmpty) return const [];
+
+    // 先并发探测能力（waitInited 内部有缓存，第二次调用立即返回）
+    final capable = <LxSource>[];
+    await Future.wait(runtimes.map((lx) async {
+      try {
+        await lx.waitInited();
+        if (lx.actions.contains('musicSearch')) capable.add(lx);
+      } catch (_) {}
+    }));
+    if (capable.isEmpty) return const [];
+
+    // 并发搜索
+    final groups = <SourceGroup>[];
+    await Future.wait(capable.map((lx) async {
+      final g = SourceGroup(
+        sourceId: 'script:${lx.id}',
+        label: lx.name,
+        state: SourceSearchState.loading,
+        keyword: kw,
+      );
+      try {
+        final list = await lx
+            .searchFromScript(kw)
+            .timeout(const Duration(seconds: 20));
+        g.songs = list ?? const [];
+        g.state = SourceSearchState.done;
+      } catch (e) {
+        g.state = SourceSearchState.failed;
+        g.error = e.toString().replaceAll('\n', ' ');
+        if (g.error!.length > 60) g.error = '${g.error!.substring(0, 60)}…';
+      }
+      groups.add(g);
+    }));
+    return groups;
   }
 
   /// 「全部」Tab 的合并列表（按源顺序拼接，保留来源标签）。
@@ -224,6 +289,10 @@ class _SearchPageState extends ConsumerState<SearchPage>
         WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
       }
     }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fillViewportIfNeeded();
+    });
 
     return Scaffold(
       appBar: AppBar(
@@ -322,9 +391,12 @@ class _SearchPageState extends ConsumerState<SearchPage>
     if (merged.isEmpty) {
       return _emptyHint('各平台均无结果', scheme);
     }
+    // 「全部」也支持滚到底：并发拉所有仍可加载的源下一页
     return ListView.builder(
-      itemCount: merged.length,
+      controller: _ctrlFor('__all__'),
+      itemCount: merged.length + 1,
       itemBuilder: (context, i) {
+        if (i == merged.length) return _allTabFooter(scheme);
         final (g, m) = merged[i];
         final songs = g.songs;
         return _songTile(
@@ -386,6 +458,55 @@ class _SearchPageState extends ConsumerState<SearchPage>
       padding: const EdgeInsets.symmetric(vertical: 14),
       child: Center(child: child),
     );
+  }
+
+  Widget _allTabFooter(ColorScheme scheme) {
+    final loadable = _groups.where((g) => g.canLoadMore).toList();
+    if (loadable.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: Text('— 已全部加载 \$_totalCount 首 —',
+              style: TextStyle(fontSize: 11, color: scheme.outline)),
+        ),
+      );
+    }
+    final busy = _groups.any((g) => g.loadingMore);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      child: Center(
+        child: busy
+            ? const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: 8),
+                  Text('加载中…', style: TextStyle(fontSize: 12)),
+                ],
+              )
+            : TextButton(
+                onPressed: () => unawaited(_loadMoreAll(loadable)),
+                child: Text('加载更多（$loadable.length 个源）',
+                    style: const TextStyle(fontSize: 13)),
+              ),
+      ),
+    );
+  }
+
+  /// 「全部」Tab 加载更多：并发拉所有可加载源的下一页。
+  Future<void> _loadMoreAll(List<SourceGroup> targets) async {
+    if (targets.isEmpty) return;
+    setState(() {
+      for (final g in targets) {
+        g.loadingMore = true;
+      }
+    });
+    await Future.wait([for (final g in targets) BuiltinSearch.loadMore(g)]);
+    if (!mounted) return;
+    setState(() {});
   }
 
   Future<void> _loadMoreById(String sourceId) async {

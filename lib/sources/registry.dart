@@ -67,6 +67,13 @@ class SourceRegistry extends SafeNotifier {
     return null;
   }
 
+  /// 所有已启用且已构建运行时的源（用于多源并发搜索）。
+  /// 是否真能搜索需调用方 await waitInited 后检查 actions。
+  List<LxSource> get enabledRuntimes => [
+        for (final s in _installed)
+          if (s.enabled && _runtimes.containsKey(s.id)) _runtimes[s.id]!,
+      ];
+
   String _slug(String name) => name
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z0-9\u4e00-\u9fa5]+'), '-')
