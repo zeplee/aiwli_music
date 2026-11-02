@@ -46,7 +46,7 @@ class MinePage extends ConsumerWidget {
                         color: Colors.white,
                         fontSize: 17,
                         fontWeight: FontWeight.bold)),
-                Text('v0.1.0 · ${registry.installed.length} 个音源',
+                Text('v1.1.0 · ${registry.installed.length} 个音源',
                     style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.85),
                         fontSize: 12)),
@@ -100,7 +100,7 @@ class MinePage extends ConsumerWidget {
         const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('Aiwli Music'),
-            subtitle: Text('v0.1.0 · 本地+音源闭环版')),
+            subtitle: Text('v1.1.0 · 本地+音源闭环版')),
         const ListTile(
             leading: Icon(Icons.code),
             title: Text('架构'),

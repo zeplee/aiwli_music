@@ -90,12 +90,12 @@ BEGIN
         BLOCK "040904e4"
         BEGIN
             VALUE "CompanyName", "com.aiwli" "\0"
-            VALUE "FileDescription", "aiwli_music" "\0"
+            VALUE "FileDescription", "AiwliMusic" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "aiwli_music" "\0"
+            VALUE "InternalName", "AiwliMusic" "\0"
             VALUE "LegalCopyright", "Copyright (C) 2026 com.aiwli. All rights reserved." "\0"
             VALUE "OriginalFilename", "aiwli_music.exe" "\0"
-            VALUE "ProductName", "aiwli_music" "\0"
+            VALUE "ProductName", "AiwliMusic" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END
