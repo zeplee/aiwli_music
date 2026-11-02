@@ -7,13 +7,21 @@ import '../runtime/runtime_host.dart';
 /// boardList / boardSongs），壳内零内置源（合规约定：壳不分发任何音源）。
 /// 脚本未声明的能力返回 null，调用方负责隐藏对应 UI。
 class LxSource {
-  LxSource({required this.id, required this.name, required this.script}) {
-    _runtime = LxRuntime(id, script);
+  LxSource({
+    required this.id,
+    required this.name,
+    required this.script,
+    this.musicFree = false,
+  }) {
+    _runtime = LxRuntime(id, script, musicFree: musicFree);
   }
 
   final String id;
   final String name;
   final String script;
+
+  /// true = MusicFree 插件（CommonJS），经适配层跑在同一个 QuickJS 宿里。
+  final bool musicFree;
   late final LxRuntime _runtime;
 
   bool enabled = true;

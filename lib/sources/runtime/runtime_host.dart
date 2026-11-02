@@ -13,6 +13,7 @@ import 'package:pointycastle/paddings/pkcs7.dart';
 
 import '../../core/services/http_client.dart';
 import '../../core/services/logger.dart';
+import '../musicfree/mf_shim.dart';
 
 /// lx 桥结果。
 class LxActionResult {
@@ -25,7 +26,8 @@ class LxActionResult {
 /// lx 运行时（spike 验证版转正）：注入 globalThis.lx，串行调度，超时重建。
 /// 已知约束（spike H6）：同步 evaluate 无法中断死循环 → 超时后整个实例废弃重建。
 class LxRuntime {
-  LxRuntime(this.sourceId, this.script, {Dio? dio}) : _dio = dio ?? Http.create() {
+  LxRuntime(this.sourceId, this.script, {Dio? dio, this.musicFree = false})
+      : _dio = dio ?? Http.create() {
     _createEngine();
     _inject();
     _registerChannels();
@@ -33,6 +35,9 @@ class LxRuntime {
 
   final String sourceId;
   final String script;
+
+  /// true 表示 script 是 MusicFree 插件（CommonJS），走 __mfLoadPlugin 包装。
+  final bool musicFree;
   final Dio _dio;
 
   JavascriptRuntime? _rt;
@@ -55,6 +60,7 @@ globalThis.__lxReqSeq = 0;
 globalThis.lx = {
   version: '2.0.0',
   env: 'mobile',
+  currentScriptInfo: { name: '', version: '', author: '', description: '', homepage: '' },
   EVENT_NAMES: { inited: 'inited', request: 'request', updateAlert: 'updateAlert' },
   on: (name, fn) => { globalThis.__lxEvents[name] = fn; },
   send: (name, data) => {
@@ -123,6 +129,22 @@ if (typeof console !== 'undefined') {
 
   void _inject() {
     final rt = _rt!;
+    // lx.currentScriptInfo：部分混淆脚本在初始化时读取自身信息做更新检查，
+    // 缺失会静默 TypeError（实测野草/野花/小熊猫）。用 @name/@version/@author 填充。
+    // （内联解析避免 runtime → lx_source 反向依赖）
+    String name = '', version = '', author = '';
+    final head = script.length > 4000 ? script.substring(0, 4000) : script;
+    for (final line in head.split('\n')) {
+      final nameM = RegExp(r'@name\s+(.+)').firstMatch(line);
+      final verM = RegExp(r'@version\s+(.+)').firstMatch(line);
+      final authorM = RegExp(r'@author\s+(.+)').firstMatch(line);
+      if (nameM != null) name = nameM.group(1)!.trim();
+      if (verM != null) version = verM.group(1)!.trim();
+      if (authorM != null) author = authorM.group(1)!.trim();
+    }
+    rt.evaluate('globalThis.lx.currentScriptInfo = '
+        '{ name: ${jsonEncode(name)}, version: ${jsonEncode(version)}, '
+        'author: ${jsonEncode(author)}, description: "", homepage: "" };');
     // console 扩展补齐（spike 实测真实脚本需要 group 等）
     rt.evaluate(r'''
       if (typeof console !== 'undefined') {
@@ -133,8 +155,26 @@ if (typeof console !== 'undefined') {
       }
     ''');
     rt.evaluate(_jsBridge);
-    rt.evaluate(script);
-    AppLog.i('LxRuntime', '[$sourceId] 脚本已注入 (${script.length} chars)');
+    if (musicFree) {
+      // MusicFree 插件：注入 CommonJS 垫片 → 加载插件 → 伪造 inited 事件
+      rt.evaluate(MusicFreeShim.bootstrap);
+      final meta = rt.evaluate('__mfLoadPlugin(${jsonEncode(script)});');
+      final m = meta.stringResult;
+      _initedPayload = {
+        'sources': {
+          sourceId: {
+            'name': sourceId,
+            'actions': ['musicUrl', 'musicSearch'],
+          }
+        },
+        'musicFreeMeta': m,
+      };
+      if (!initedCompleter.isCompleted) initedCompleter.complete(_initedPayload);
+      AppLog.i('LxRuntime', '[$sourceId] MusicFree 插件已加载: $m');
+    } else {
+      rt.evaluate(script);
+      AppLog.i('LxRuntime', '[$sourceId] 脚本已注入 (${script.length} chars)');
+    }
   }
 
   // ---------- 通道 ----------
@@ -286,7 +326,7 @@ if (typeof console !== 'undefined') {
     }
     final fresh = Completer<Map<Object?, Object?>?>();
     _resultCompleter = fresh;
-    _eval('__lxDispatch(${jsonEncode(payload)})');
+    _eval(musicFree ? _mfDispatchExpr(payload) : '__lxDispatch(${jsonEncode(payload)})');
     final timer = Timer.periodic(const Duration(milliseconds: 10), (_) => drainOnce());
     try {
       final r = await fresh.future.timeout(timeout);
@@ -304,6 +344,34 @@ if (typeof console !== 'undefined') {
       timer.cancel();
       _resultCompleter = null;
     }
+  }
+
+  /// MusicFree 插件的 dispatch：把 lx 请求映射到插件方法。
+  /// musicSearch → __mfSearch(text) → songs[]
+  /// musicUrl    → __mfMediaUrl(musicInfo) → url
+  /// lyric       → __mfLyric(musicInfo) → lrc
+  String _mfDispatchExpr(Map<String, dynamic> p) {
+    final action = p['action'] as String? ?? '';
+    final info = (p['info'] as Map?)?.cast<Object?, Object?>() ?? const {};
+    switch (action) {
+      case 'musicSearch':
+        final text = (info['text'] ?? info['word'] ?? '').toString();
+        final page = (info['page'] as num?)?.toInt() ?? 1;
+        return '''__mfSearch(${jsonEncode(text)}, $page).then(
+          function (list) { sendMessage('LxResult', JSON.stringify({ ok: true, result: list })); },
+          function (e) { sendMessage('LxResult', JSON.stringify({ ok: false, error: String(e) })); });''';
+      case 'musicUrl':
+        final mi = (info['musicInfo'] as Map?)?.cast<Object?, Object?>() ?? const {};
+        return '''__mfMediaUrl(${jsonEncode(mi)}, ${jsonEncode('128k')}).then(
+          function (u) { sendMessage('LxResult', JSON.stringify({ ok: true, result: u })); },
+          function (e) { sendMessage('LxResult', JSON.stringify({ ok: false, error: String(e) })); });''';
+      case 'lyric':
+        final mi = (info['musicInfo'] as Map?)?.cast<Object?, Object?>() ?? const {};
+        return '''__mfLyric(${jsonEncode(mi)}).then(
+          function (l) { sendMessage('LxResult', JSON.stringify({ ok: true, result: l })); },
+          function (e) { sendMessage('LxResult', JSON.stringify({ ok: false, error: String(e) })); });''';
+    }
+    return "sendMessage('LxResult', JSON.stringify({ ok: false, error: '不支持的 action: $action' }));";
   }
 
   Future<void> _recreate() async {

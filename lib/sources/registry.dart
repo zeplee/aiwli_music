@@ -13,20 +13,30 @@ class InstalledSource {
     required this.name,
     required this.script,
     required this.enabled,
+    this.musicFree = false,
   });
   final String id; // 稳定 id：name 的 slug
   final String name;
   final String script;
   final bool enabled;
 
-  Map<String, Object?> toJson() =>
-      {'id': id, 'name': name, 'script': script, 'enabled': enabled};
+  /// true = MusicFree 插件（CommonJS），false = lx 源脚本。
+  final bool musicFree;
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        'name': name,
+        'script': script,
+        'enabled': enabled,
+        if (musicFree) 'musicFree': true,
+      };
 
   static InstalledSource fromJson(Map<Object?, Object?> m) => InstalledSource(
         id: m['id'] as String? ?? '',
         name: m['name'] as String? ?? '未命名源',
         script: m['script'] as String? ?? '',
         enabled: m['enabled'] == true,
+        musicFree: m['musicFree'] == true,
       );
 }
 
@@ -86,6 +96,39 @@ class SourceRegistry extends SafeNotifier {
     return src;
   }
 
+  /// 导入 MusicFree 插件（CommonJS 模块）。名称取插件 platform 字段。
+  Future<InstalledSource> importMusicFreePlugin(String code,
+      {String? platformHint}) async {
+    final platform = _parseMfPlatform(code) ?? platformHint ?? 'MusicFree 插件';
+    final id = 'mf-${_slug(platform)}';
+    final src = InstalledSource(
+      id: id,
+      name: platform,
+      script: code,
+      enabled: true,
+      musicFree: true,
+    );
+    final existing = _installed.indexWhere((s) => s.id == id);
+    if (existing >= 0) {
+      _installed[existing] = src;
+    } else {
+      _installed.add(src);
+    }
+    _activeId ??= id;
+    await _rebuildRuntime(src);
+    await _persist();
+    notifyListeners();
+    AppLog.i('SourceRegistry', '导入 MusicFree 插件 $platform ($id)');
+    return src;
+  }
+
+  /// 从插件源码中读取 platform（兼容 _0x 混淆时的字符串字面量）。
+  static String? _parseMfPlatform(String code) {
+    final m = RegExp(r'''platform['"]?\s*[:=]\s*['"]([^'"]{1,40})['"]''')
+        .firstMatch(code);
+    return m?.group(1);
+  }
+
   Future<void> setActive(String id) async {
     _activeId = id;
     await _persist();
@@ -121,7 +164,8 @@ class SourceRegistry extends SafeNotifier {
   Future<void> _rebuildRuntime(InstalledSource src) async {
     await _runtimes.remove(src.id)?.dispose();
     if (!src.enabled) return;
-    _runtimes[src.id] = LxSource(id: src.id, name: src.name, script: src.script);
+    _runtimes[src.id] = LxSource(
+        id: src.id, name: src.name, script: src.script, musicFree: src.musicFree);
     // 后台预热 inited，不阻塞 UI
     unawaited(_runtimes[src.id]!.waitInited().then((ok) {
       AppLog.i('SourceRegistry', '源 ${src.name} inited=$ok');

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_providers.dart';
@@ -71,6 +72,11 @@ class SourceManagePage extends ConsumerWidget {
               icon: const Icon(Icons.folder_open, size: 18),
               label: const Text('扫描 Download 目录'),
             ),
+            OutlinedButton.icon(
+              onPressed: () => _importPluginFiles(context, ref),
+              icon: const Icon(Icons.extension, size: 18),
+              label: const Text('导入插件文件'),
+            ),
           ]),
         ),
         const SizedBox(height: 24),
@@ -104,13 +110,55 @@ class SourceManagePage extends ConsumerWidget {
         .where((f) => f.path.toLowerCase().endsWith('.js'))) {
       try {
         final text = f.readAsStringSync();
-        if (text.contains('globalThis.lx') || text.contains('lx.on')) {
+        if (_isMusicFreePlugin(text)) {
+          await ref.read(sourceRegistryProvider).importMusicFreePlugin(text);
+          count++;
+        } else if (text.contains('globalThis.lx') || text.contains('lx.on')) {
           await ref.read(sourceRegistryProvider).importScript(text);
           count++;
         }
       } catch (_) {}
     }
     _toast(messenger, count > 0 ? '已导入 $count 个音源脚本' : 'Download 目录未发现 lx 脚本');
+  }
+
+  /// MusicFree 插件判定：CommonJS 模块导出 + 典型方法名。
+  static bool _isMusicFreePlugin(String code) {
+    if (code.contains('globalThis.lx')) return false;
+    return code.contains('getMediaSource') &&
+        (code.contains('module.exports') || code.contains('exports.'));
+  }
+
+  /// 从文件选择器导入多个 .js（自动区分 lx 脚本与 MusicFree 插件）。
+  Future<void> _importPluginFiles(BuildContext context, WidgetRef ref) async {
+    final messenger = ScaffoldMessenger.of(context);
+    const groups = [
+      XTypeGroup(label: '音源脚本/插件', extensions: ['js', 'txt']),
+    ];
+    final files = await openFiles(acceptedTypeGroups: groups);
+    if (files.isEmpty) return;
+    var lxCount = 0, mfCount = 0, failed = 0;
+    for (final f in files) {
+      try {
+        final text = await f.readAsString();
+        if (_isMusicFreePlugin(text)) {
+          await ref.read(sourceRegistryProvider).importMusicFreePlugin(text);
+          mfCount++;
+        } else if (text.contains('globalThis.lx') || text.contains('lx.on')) {
+          await ref.read(sourceRegistryProvider).importScript(text);
+          lxCount++;
+        } else {
+          failed++;
+        }
+      } catch (_) {
+        failed++;
+      }
+    }
+    final parts = <String>[];
+    if (lxCount > 0) parts.add('lx 脚本 $lxCount');
+    if (mfCount > 0) parts.add('MusicFree 插件 $mfCount');
+    if (failed > 0) parts.add('无法识别 $failed');
+    _toast(messenger, parts.isEmpty ? '未导入任何源' : '已导入：${parts.join('、')}');
   }
 
   void _toast(ScaffoldMessengerState messenger, String msg) {
