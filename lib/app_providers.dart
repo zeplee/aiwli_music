@@ -17,6 +17,7 @@ import 'core/services/sleep_timer.dart';
 import 'core/services/webdav_service.dart';
 import 'package:flutter_media_store/flutter_media_store.dart';
 import 'core/storage/settings_store.dart';
+import 'player/playback_resolver.dart';
 import 'player/player_core.dart';
 import 'player/providers.dart';
 import 'sources/registry.dart';
@@ -39,25 +40,25 @@ final flutterMediaStoreProvider =
 final sourceRegistryProvider = ChangeNotifierProvider<SourceRegistry>(
     (ref) => SourceRegistry(ref.watch(settingsStoreProvider)));
 
-/// URL 解析：local 直用；其余走活跃 lx 脚本取链（壳内零内置源）。
+/// URL 解析：local 直用；其余按「曲目所属源」取链，失败自动换源。
+///
+/// 修正：此前一律用 activeRuntime（活跃源）取链，导致搜索结果里
+/// 其他源的曲目全部失败。现在交给 [PlaybackResolver]：先试本源，
+/// 失败后按歌名+歌手在其他源重新搜索并重试。
 Future<String> resolveUrl(Ref ref, PlayerItem item) async {
   if (item.sourceId == 'local' || item.sourceId == 'url') {
     final url = item.resolvedUrl;
     if (url == null || url.isEmpty) throw Exception('本地条目缺地址');
     return url;
   }
-  final registry = ref.read(sourceRegistryProvider);
-  final lx = registry.activeRuntime;
-  if (lx == null) throw Exception('未启用音源，无法取链接');
-  return lx.getMusicUrl(
-    MusicInfo(
-      sourceId: item.sourceId,
-      musicId: item.musicId,
-      title: item.title,
-      artist: item.artist,
-    ),
-    ref.read(appSettingsProvider).quality,
+  final r = await PlaybackResolver(ref.read(sourceRegistryProvider)).resolve(
+    title: item.title,
+    artist: item.artist,
+    sourceId: item.sourceId,
+    musicId: item.musicId,
+    quality: ref.read(appSettingsProvider).quality,
   );
+  return r.url;
 }
 
 final playerCoreProvider = Provider<PlayerCore>((ref) {

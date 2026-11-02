@@ -42,9 +42,20 @@ class LxSource {
         : null;
     final acts = ((first?['actions'] as List?) ?? const ['musicUrl']).cast<String>();
     _actions = acts.toSet();
+    // 记录脚本声明的平台标识（kw/tx/wy/kg/mg…），用于「内置平台曲目
+    // 借用脚本取链」时判断该脚本能否处理某平台。
+    _platforms = {for (final k in sources.keys) k.toString()};
     _inited = true;
     return true;
   }
+
+  /// 脚本 inited 时声明的平台标识集合。
+  Set<String> _platforms = {};
+  Set<String> get platforms => _platforms;
+
+  /// 该脚本是否能处理指定平台（如内置搜索得到的 'kw'/'tx'）。
+  bool supportsPlatform(String platform) =>
+      _platforms.contains(platform) && _actions.contains('musicUrl');
 
   /// 搜索：脚本声明 musicSearch 能力则走脚本，否则返回 null（无内置源回退）。
   Future<List<MusicInfo>?> searchFromScript(String keyword, {int page = 1}) async {
@@ -96,7 +107,15 @@ class LxSource {
   }
 
   /// 取播放链接。quality: 128k/320k/flac/...
-  Future<String> getMusicUrl(MusicInfo song, Quality quality) async {
+  ///
+  /// [platform] 用于「内置平台搜索结果借用脚本取链」的场景：曲目的
+  /// sourceId 是平台名（kw/tx/wy/kg/mg），而脚本需要的是它自己声明的平台
+  /// 标识。不传则用本源 id。
+  Future<String> getMusicUrl(
+    MusicInfo song,
+    Quality quality, {
+    String? platform,
+  }) async {
     await waitInited();
     final q = switch (quality) {
       Quality.standard => '128k',
@@ -106,7 +125,7 @@ class LxSource {
       Quality.hires => 'flac24bit',
     };
     final r = await _runtime.dispatch({
-      'source': id,
+      'source': platform ?? id,
       'action': 'musicUrl',
       'info': {
         'musicInfo': _musicInfoForScript(song),
