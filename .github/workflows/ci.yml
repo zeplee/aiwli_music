@@ -17,6 +17,9 @@ jobs:
         with:
           channel: stable
           cache: true
+      # hotkey_manager 的 nativeapi 原生资产在 flutter test 构建时需要 GTK/X11 头文件
+      - name: Install test build deps
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libx11-dev libxi-dev ninja-build
       - run: flutter pub get
       # NOTE: no `dart format --set-exit-if-changed` gate. The repo is formatted
       # with an older Dart style; the stable formatter (tall style) would reject
