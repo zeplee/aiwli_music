@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:dio/dio.dart';
 import 'package:webdav_client/webdav_client.dart' as webdav;
 
 import '../../core/services/logger.dart';
@@ -72,28 +73,51 @@ class WebDavService extends SafeNotifier {
     );
   }
 
+  /// 归一化后的远端目录：空 → /aiwli_music；保证以 / 开头、无尾 /
+  String get normalizedDir {
+    var dir = config.remoteDir.trim().isEmpty ? '/aiwli_music' : config.remoteDir.trim();
+    if (!dir.startsWith('/')) dir = '/$dir';
+    if (dir.length > 1 && dir.endsWith('/')) dir = dir.substring(0, dir.length - 1);
+    return dir;
+  }
+
+  String get _remotePath => '$normalizedDir/$_backupName';
+
+  /// 创建远端目录（已存在时静默）。测试连接后调用，避免 409 Conflict。
+  Future<void> ensureRemoteDir() async {
+    final client = _client();
+    if (client == null) throw Exception('WebDAV 未配置');
+    try {
+      await client.mkdirAll(normalizedDir);
+    } catch (_) {}
+  }
+
   /// 上传备份：收藏 JSON → WebDAV。
   Future<void> uploadBackup(String json) async {
     final client = _client();
     if (client == null) throw Exception('WebDAV 未配置');
-    try {
-      await client.mkdirAll(config.remoteDir);
-    } catch (_) {}
+    await client.mkdirAll(normalizedDir);
     await client.write(
-      '${config.remoteDir.endsWith('/') ? config.remoteDir : '${config.remoteDir}/'}$_backupName',
+      _remotePath,
       utf8.encode(json),
       onProgress: (c, t) {},
     );
   }
 
-  /// 下载备份：返回 JSON 字符串（不存在则抛错）。
+  /// 下载备份：返回 JSON 字符串（不存在则抛友好错误）。
   Future<String> downloadBackup() async {
     final client = _client();
     if (client == null) throw Exception('WebDAV 未配置');
-    final path =
-        '${config.remoteDir.endsWith('/') ? config.remoteDir : '${config.remoteDir}/'}$_backupName';
-    final bytes = await client.read(path, onProgress: (c, t) {});
-    return utf8.decode(bytes);
+    try {
+      final bytes = await client.read(_remotePath, onProgress: (c, t) {});
+      return utf8.decode(bytes);
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code == 404 || code == 409) {
+        throw Exception('远端备份不存在（$code）——请先点「上传备份」');
+      }
+      rethrow;
+    }
   }
 
   @override

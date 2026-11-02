@@ -148,6 +148,18 @@ class PlaylistService extends SafeNotifier {
     unawaitedPersist();
   }
 
+  /// 替换指定条目（自动匹配用）。
+  void replaceEntry(String id, int index, PlaylistEntry entry) {
+    playlists = [
+      for (final p in playlists)
+        if (p.id == id && index < p.entries.length)
+          p.copyWith(entries: [...p.entries]..[index] = entry)
+        else
+          p
+    ];
+    unawaitedPersist();
+  }
+
   void move(String id, int from, int to) {
     playlists = [
       for (final p in playlists)

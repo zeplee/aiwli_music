@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app_providers.dart';
+import '../../core/services/backup_service.dart' show parseTextPlaylist;
 import '../../core/services/playlists.dart';
 import '../../player/player_core.dart';
 import '../player/player_page.dart';
@@ -152,9 +153,9 @@ class PlaylistsStrip extends ConsumerWidget {
                 ?.copyWith(fontWeight: FontWeight.bold)),
         const Spacer(),
         TextButton.icon(
-          onPressed: () => _importM3u(context, ref),
+          onPressed: () => _importPlaylistFile(context, ref),
           icon: const Icon(Icons.upload_file, size: 18),
-          label: const Text('导入 M3U', style: TextStyle(fontSize: 12)),
+          label: const Text('导入歌单', style: TextStyle(fontSize: 12)),
         ),
         TextButton.icon(
           onPressed: () => _create(context, ref),
@@ -236,17 +237,137 @@ class PlaylistsStrip extends ConsumerWidget {
     }
   }
 
-  Future<void> _importM3u(BuildContext context, WidgetRef ref) async {
-    const typeGroup = XTypeGroup(label: 'M3U', extensions: ['m3u', 'm3u8']);
-    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+  /// 导入歌单文件：自动识别 M3U / 文本歌单（每行“歌手 - 标题”，lx 风格）。
+  /// 文本条目在音源支持 musicSearch 时自动匹配。
+  Future<void> _importPlaylistFile(BuildContext context, WidgetRef ref) async {
+    const groups = [
+      XTypeGroup(
+          label: '歌单文件', extensions: ['m3u', 'm3u8', 'txt', 'list']),
+    ];
+    final rootNavigator = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
+    final file = await openFile(acceptedTypeGroups: groups);
     if (file == null) return;
     final content = await file.readAsString();
-    final name = file.name.replaceAll(RegExp(r'\.m3u8?$', caseSensitive: false), '');
-    final p = ref.read(playlistsProvider).importM3u(name, content);
-    if (p == null && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('未解析到有效条目')));
+    final baseName =
+        file.name.replaceAll(RegExp(r'\.(m3u8?|txt|list)$', caseSensitive: false), '');
+
+    final isM3u = content.contains('#EXTINF') ||
+        RegExp(r'^\[\d+:\d+', multiLine: true).hasMatch(content);
+
+    final service = ref.read(playlistsProvider);
+    List<PlaylistEntry> entries;
+    var matched = 0;
+
+    if (isM3u) {
+      final p = service.importM3u(baseName, content);
+      if (p == null) {
+        messenger.showSnackBar(const SnackBar(content: Text('未解析到有效条目')));
+        return;
+      }
+      entries = p.entries;
+      matched = entries.length;
+    } else {
+      final lines = parseTextPlaylist(content);
+      if (lines.isEmpty) {
+        messenger.showSnackBar(const SnackBar(content: Text('未解析到有效条目')));
+        return;
+      }
+      // 创建歌单，先放入待匹配条目
+      final p = service.create(baseName);
+      entries = [
+        for (final l in lines)
+          PlaylistEntry(
+            sourceId: 'pending',
+            musicId: '',
+            title: l.title,
+            artist: l.artist ?? '未知歌手',
+          ),
+      ];
+      service.addEntries(p.id, entries);
+
+      // 自动匹配（活跃音源声明 musicSearch 才可用）
+      final lx = ref.read(sourceRegistryProvider).activeRuntime;
+      if (lx != null) {
+        final canSearch = await lx.searchFromScript('__probe__').then(
+              (v) => true,
+              onError: (_) => false,
+            );
+        if (canSearch) {
+          matched = await _matchEntries(
+              rootNavigator, ref, p.id, entries);
+        }
+      }
     }
+
+    final pending = entries.length - matched;
+    messenger.showSnackBar(SnackBar(
+        content: Text('导入 ${entries.length} 首：已匹配 $matched${pending > 0 ? '，未匹配 $pending（需支持搜索的音源）' : ''}')));
+  }
+
+  Future<int> _matchEntries(NavigatorState rootNavigator, WidgetRef ref,
+      String playlistId, List<PlaylistEntry> entries) async {
+    final service = ref.read(playlistsProvider);
+    final lx = ref.read(sourceRegistryProvider).activeRuntime;
+    if (lx == null) return 0;
+
+    var matched = 0;
+    var cancelled = false;
+    // 进度弹窗
+    showDialog<void>(
+      context: rootNavigator.context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => AlertDialog(
+          title: const Text('正在匹配歌曲'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            LinearProgressIndicator(value: entries.isEmpty ? 0 : matched / entries.length),
+            const SizedBox(height: 12),
+            Text('$matched / ${entries.length}'),
+          ]),
+          actions: [
+            TextButton(
+                onPressed: () {
+                  cancelled = true;
+                  Navigator.of(dialogCtx).pop();
+                },
+                child: const Text('停止')),
+          ],
+        ),
+      ),
+    );
+
+    final pl = service.playlists.where((x) => x.id == playlistId).firstOrNull;
+    if (pl == null) return 0;
+    final fresh = pl.entries; // 与刚创建一致
+    for (var i = 0; i < fresh.length && i < entries.length && !cancelled; i++) {
+      final e = fresh[i];
+      if (e.sourceId != 'pending') {
+        matched++;
+        continue;
+      }
+      try {
+        final kw = e.artist == '未知歌手' ? e.title : '${e.artist} ${e.title}';
+        final hits = await lx.searchFromScript(kw);
+        if (hits != null && hits.isNotEmpty) {
+          final hit = hits.first;
+          service.replaceEntry(playlistId, i,
+              PlaylistEntry(
+                sourceId: hit.sourceId,
+                musicId: hit.musicId,
+                title: hit.title,
+                artist: hit.artist,
+                album: hit.album?.name,
+                durationMs: hit.duration?.inMilliseconds,
+              ));
+          matched++;
+        }
+      } catch (_) {
+        // 单条失败继续
+      }
+    }
+    if (!cancelled && rootNavigator.canPop()) rootNavigator.pop();
+    return matched;
   }
 }
 

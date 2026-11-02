@@ -76,7 +76,13 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
     }
   }
 
+  // 保存临时配置供各操作使用（不点保存也会生效，但持久化仍需点保存）
+  void _applyFieldsToService() {
+    ref.read(webDavServiceProvider).saveConfig(_configFromFields());
+  }
+
   Future<String> _testConnection() async {
+    _applyFieldsToService();
     final client = webdav.newClient(
       _url.text.trim(),
       user: _user.text.trim(),
@@ -84,25 +90,28 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
     );
     try {
       await client.ping();
-      return '连接成功';
+      // 顺手建好远端目录，避免恢复/上传时 409 Conflict
+      await ref.read(webDavServiceProvider).ensureRemoteDir();
+      return '连接成功，远端目录 ${ref.read(webDavServiceProvider).normalizedDir} 已就绪';
     } finally {}
   }
 
   Future<String> _upload() async {
+    _applyFieldsToService();
+    await ref.read(favoritesProvider).ensureLoaded();
+    await ref.read(playlistsProvider).load();
+    await ref.read(backupProvider).upload();
     final favorites = ref.read(favoritesProvider);
-    await favorites.ensureLoaded();
-    await ref
-        .read(webDavServiceProvider)
-        .uploadBackup(favorites.exportJson());
-    return '已上传备份（${favorites.items.length} 首收藏）';
+    final playlists = ref.read(playlistsProvider);
+    final sources = ref.read(sourceRegistryProvider);
+    return '已上传全量备份：收藏 ${favorites.items.length} 首、'
+        '歌单 ${playlists.playlists.length} 个、音源 ${sources.installed.length} 个、设置 ✓';
   }
 
   Future<String> _restore() async {
-    final webdavSvc = ref.read(webDavServiceProvider);
-    final favorites = ref.read(favoritesProvider);
-    final raw = await webdavSvc.downloadBackup();
-    final added = await favorites.importJson(raw);
-    return '已恢复（新增 $added 首收藏）';
+    _applyFieldsToService();
+    final raw = await ref.read(webDavServiceProvider).downloadBackup();
+    return ref.read(backupProvider).restore(raw);
   }
 
   @override
@@ -143,7 +152,7 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
             TextField(
               controller: _dir,
               decoration: const InputDecoration(
-                  labelText: '远程目录', border: OutlineInputBorder(), isDense: true),
+                  labelText: '远程目录（默认 /aiwli_music）', border: OutlineInputBorder(), isDense: true),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(
@@ -155,7 +164,7 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
             FilledButton.icon(
               onPressed: () => _run(_upload),
               icon: const Icon(Icons.cloud_upload, size: 18),
-              label: const Text('上传备份（收藏）'),
+              label: const Text('上传全量备份'),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(

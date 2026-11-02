@@ -8,6 +8,7 @@ import 'core/lyric/lrc_parser.dart';
 import 'core/models/lyric.dart';
 import 'core/models/music.dart';
 import 'core/services/app_settings.dart';
+import 'core/services/backup_service.dart';
 import 'core/services/favorites_service.dart';
 import 'core/services/logger.dart';
 import 'core/services/playlists.dart';
@@ -98,6 +99,8 @@ final playlistsProvider = ChangeNotifierProvider<PlaylistService>((ref) {
   ref.onDispose(s.dispose);
   return s;
 });
+
+final backupProvider = Provider<BackupService>((ref) => BackupService(ref));
 
 // ============ 歌词 ============
 
