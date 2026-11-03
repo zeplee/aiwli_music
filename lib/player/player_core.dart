@@ -49,7 +49,7 @@ class PlayerCore {
     AudioFocusPolicy? focus,
     Future<ResolvedPlayback> Function(PlayerItem item, Set<String> excludeSources)?
         urlResolver,
-    void Function(String sourceId, Object error)? onSourceUnplayable,
+    void Function(ResolvedPlayback resolved, Object error)? onSourceUnplayable,
     Future<void> Function(PlayerItem item)? prefetcher,
   }) : _engine = engine,
         // ignore: prefer_initializing_formals
@@ -68,7 +68,15 @@ class PlayerCore {
   final AudioFocusPolicy? _focus;
   final Future<ResolvedPlayback> Function(PlayerItem item, Set<String> excludeSources)?
       _urlResolver;
-  final void Function(String sourceId, Object error)? _onSourceUnplayable;
+  final void Function(ResolvedPlayback resolved, Object error)? _onSourceUnplayable;
+
+  /// 当前加载上下文：引擎的 open 失败是【异步】经 error 流上报的
+  /// （mpv "Failed to open <死链>"），同步重试环收不到——
+  /// 由 _onEngineSnapshot 驱动换源回退。
+  ResolvedPlayback? _activeResolved;
+  Set<String> _activeExcludes = const {};
+  int _fallbackCount = 0;
+  bool _fallbackInFlight = false;
   final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
@@ -117,6 +125,22 @@ class PlayerCore {
   int get currentIndex => _index;
 
   void _onEngineSnapshot(EngineSnapshot snap) {
+    // 引擎异步错误（mpv "Failed to open <死链>"）→ 换源回退。
+    // load() 本身不抛这类错，只能在 error 流里接。
+    if (snap.processing == EngineProcessing.error &&
+        snap.error != null &&
+        _activeResolved != null &&
+        !_fallbackInFlight) {
+      final resolved = _activeResolved!;
+      if (resolved.sourceId != 'local' && resolved.sourceId != 'url') {
+        unawaited(_fallbackOnEngineError(snap));
+        state.value = state.value.copyWith(
+          processing: EngineProcessing.loading,
+          error: null,
+        );
+        return;
+      }
+    }
     state.value = state.value.copyWith(
       processing: snap.processing,
       playing: snap.playing,
@@ -164,6 +188,8 @@ class PlayerCore {
       var url = item.resolvedUrl;
       final failedWinners = <String>{}; // 已验证打不开的脚本实例 id
       const maxRounds = 3;
+      _fallbackCount = 0;
+      _fallbackInFlight = false;
 
       for (var round = 0; round < maxRounds; round++) {
         if (url == null || url.isEmpty) {
@@ -172,6 +198,8 @@ class PlayerCore {
           // round > 0：排除已打不开的源，强制走换源
           resolved = await resolver(item, failedWinners);
           url = resolved.url;
+          _activeResolved = resolved;
+          _activeExcludes = {...failedWinners};
         }
         if (gen != _loadGeneration) return;
         try {
@@ -181,9 +209,8 @@ class PlayerCore {
           // URL 拿到了但打不开（死链/域名失效/5xx）：
           // ① 拉黑胜出源 30 分钟 ② 作废该曲缓存（否则重试永远命中同一条死链）
           // ③ 排除后重新 resolve
-          final wid = resolved?.winnerId ?? item.sourceId;
-          _onSourceUnplayable?.call(wid, loadErr);
-          failedWinners.add(wid);
+          if (resolved != null) _onSourceUnplayable?.call(resolved, loadErr);
+          failedWinners.add(resolved?.winnerId ?? item.sourceId);
           if (round == maxRounds - 1) rethrow;
           state.value = state.value
               .copyWith(processing: EngineProcessing.loading, error: null);
@@ -201,6 +228,73 @@ class PlayerCore {
         error: '加载失败: $e',
         playing: false,
       );
+    }
+  }
+
+  /// 引擎异步错误（mpv "Failed to open <死链>"）→ 换源回退。
+  /// load() 本身不抛这类错，只能在 error 流里接。
+  Future<void> _fallbackOnEngineError(EngineSnapshot snap) async {
+    if (_fallbackInFlight) return;
+    final resolved = _activeResolved;
+    if (resolved == null) return;
+    if (resolved.sourceId == 'local' || resolved.sourceId == 'url') return;
+    if (_fallbackCount >= 2) {
+      state.value = state.value.copyWith(
+        processing: EngineProcessing.error,
+        error: '加载失败: ${snap.error ?? '音源不可用'}（已尝试 ${_fallbackCount + 1} 个源）',
+        playing: false,
+      );
+      return;
+    }
+    _fallbackInFlight = true;
+    _fallbackCount++;
+    final gen = _loadGeneration;
+    final excludes = {..._activeExcludes, resolved.winnerId};
+    _onSourceUnplayable?.call(resolved, snap.error ?? 'open failed');
+    state.value = state.value.copyWith(
+      processing: EngineProcessing.loading,
+      error: null,
+      playing: false,
+    );
+    final item = _index >= 0 && _index < _queue.length
+        ? _queue[_index]
+        : null;
+    if (item == null) return;
+    try {
+      final next = await _urlResolver?.call(item, excludes);
+      if (gen != _loadGeneration) return;
+      if (next == null || next.url.isEmpty) {
+        state.value = state.value.copyWith(
+          processing: EngineProcessing.error,
+          error: '加载失败: 换源后仍无可用地址',
+          playing: false,
+        );
+        return;
+      }
+      _activeResolved = next;
+      _activeExcludes = excludes;
+      await _engine.load(Uri.parse(next.url));
+      if (gen != _loadGeneration) return;
+      await _engine.play();
+      _expectCompletion = true;
+      // 回退成功：清掉旧 URL 留下的错误文本，并解除回退上下文——
+      // 防止旧 URL 的迟到 mpv 错误再触发一轮无谓回退。
+      _activeResolved = null;
+      state.value = state.value.copyWith(
+        processing: EngineProcessing.ready,
+        error: null,
+        playing: true,
+      );
+      _prefetchNext();
+    } catch (e) {
+      if (gen != _loadGeneration) return;
+      state.value = state.value.copyWith(
+        processing: EngineProcessing.error,
+        error: '加载失败: $e（换源后）',
+        playing: false,
+      );
+    } finally {
+      _fallbackInFlight = false;
     }
   }
 

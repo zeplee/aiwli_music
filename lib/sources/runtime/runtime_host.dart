@@ -377,9 +377,13 @@ if (typeof console !== 'undefined') {
     Map<String, dynamic> payload, {
     Duration timeout = const Duration(seconds: 15),
   }) async {
-    if (_resultCompleter != null) {
-      // 串行保护：上一个调用未完成时排队等待
-      await Future<void>.delayed(const Duration(milliseconds: 80));
+    // 串行保护：上一个调用未完成时等它结束（80ms 猜测会导致
+    // 旧请求仍在飞时新请求就开始注入，两次注入互相顶掉 completer）。
+    final previous = _resultCompleter;
+    if (previous != null) {
+      try {
+        await previous.future.timeout(const Duration(seconds: 16));
+      } catch (_) {/* 上一个失败也要等完，避免并发注入 */}
     }
     final fresh = Completer<Map<Object?, Object?>?>();
     _resultCompleter = fresh;
