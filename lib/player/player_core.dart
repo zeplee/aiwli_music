@@ -18,6 +18,7 @@ class PlayerItem {
     this.album,
     this.artUri,
     this.duration,
+    this.raw,
   });
   final String title;
   final String artist;
@@ -27,6 +28,9 @@ class PlayerItem {
   final String? album;
   final Uri? artUri;
   final Duration? duration;
+
+  /// 音源返回的原始对象（MusicFree 插件取链依赖私有字段，需原样透传）。
+  final Map<Object?, Object?>? raw;
 
   TrackMetadata get metadata => TrackMetadata(
         title: title,

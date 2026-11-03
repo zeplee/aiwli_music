@@ -23,6 +23,7 @@ class MusicInfo {
     this.album,
     this.duration,
     this.qualities = const [Quality.standard],
+    this.raw,
   });
   final String sourceId; // 所属音源 id（如 'kw'）
   final String musicId; // 源内歌曲 id
@@ -31,6 +32,10 @@ class MusicInfo {
   final Album? album;
   final Duration? duration;
   final List<Quality> qualities;
+
+  /// 音源返回的原始对象（MusicFree 插件取链依赖 play_path_64 / qualitys 等
+  /// 私有字段，通用模型装不下，必须原样保留以便回传给插件）。
+  final Map<Object?, Object?>? raw;
 }
 
 /// 可播放曲目引用（PlayerCore 队列元素，见设计文档 §3.1）。

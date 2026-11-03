@@ -237,6 +237,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
             sourceId: m.sourceId,
             musicId: m.musicId,
             duration: m.duration,
+            raw: m.raw,
           ),
       ],
       index: index,
@@ -253,6 +254,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
       artist: m.artist,
       sourceId: m.sourceId,
       musicId: m.musicId,
+      raw: m.raw,
     ));
     messenger.showSnackBar(SnackBar(
         content: Text('下载任务结束：${m.title}（详见下载页）'),

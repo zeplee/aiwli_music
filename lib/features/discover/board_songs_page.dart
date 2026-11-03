@@ -53,6 +53,7 @@ class _BoardSongsPageState extends ConsumerState<BoardSongsPage> {
           sourceId: m.sourceId,
           musicId: m.musicId,
           duration: m.duration,
+          raw: m.raw,
         ),
     ];
     core.setQueue(items, index: index);

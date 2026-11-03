@@ -57,6 +57,7 @@ Future<String> resolveUrl(Ref ref, PlayerItem item) async {
     sourceId: item.sourceId,
     musicId: item.musicId,
     quality: ref.read(appSettingsProvider).quality,
+    raw: item.raw,
   );
   return r.url;
 }

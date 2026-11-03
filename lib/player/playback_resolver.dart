@@ -74,6 +74,7 @@ class PlaybackResolver {
     required String sourceId,
     required String musicId,
     required Quality quality,
+    Map<Object?, Object?>? raw,
     void Function(String sourceLabel)? onToggle,
   }) async {
     final tried = <String>[];
@@ -85,6 +86,7 @@ class PlaybackResolver {
       sourceId: sourceId,
       musicId: musicId,
       quality: quality,
+      raw: raw,
     );
     if (first != null) return first;
     tried.add(_label(sourceId));
@@ -139,6 +141,7 @@ class PlaybackResolver {
     required String sourceId,
     required String musicId,
     required Quality quality,
+    Map<Object?, Object?>? raw,
   }) async {
     final isBuiltin = builtinLabels.containsKey(sourceId);
 
@@ -167,6 +170,7 @@ class PlaybackResolver {
                 musicId: musicId,
                 title: title,
                 artist: artist,
+                raw: raw,
               ),
               quality,
               // 内置平台：把平台名告诉脚本；脚本源自身则用其 id

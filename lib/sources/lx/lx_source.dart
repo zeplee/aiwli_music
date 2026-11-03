@@ -170,18 +170,35 @@ class LxSource {
     return null;
   }
 
-  Map<String, Object?> _musicInfoForScript(MusicInfo song) => {
-        'songmid': song.musicId,
-        'hash': song.musicId,
-        'id': song.musicId,
-        'title': song.title,
-        'name': song.title,
-        'singer': song.artist,
-        'albumName': song.album?.name ?? '',
-        'albumId': song.album?.id ?? '',
-        'interval': song.duration?.inSeconds.toString() ?? '00:00',
-        'source': song.sourceId,
-      };
+  /// 传给脚本/插件的 musicInfo。
+  ///
+  /// 若曲目带原始对象（搜索阶段从源返回的完整 map），**以它为基底**再补齐
+  /// 通用字段——MusicFree 插件取链读的就是 play_path_64 / qualitys /
+  /// musicId 这些私有键，只给通用字段会导致「插件未返回播放地址」。
+  Map<String, Object?> _musicInfoForScript(MusicInfo song) {
+    final base = <String, Object?>{};
+    final raw = song.raw;
+    if (raw != null) {
+      for (final e in raw.entries) {
+        base['${e.key}'] = e.value;
+      }
+    }
+    // 通用字段兜底（不覆盖已有值）
+    base.putIfAbsent('songmid', () => song.musicId);
+    base.putIfAbsent('hash', () => song.musicId);
+    base.putIfAbsent('id', () => song.musicId);
+    base.putIfAbsent('musicId', () => song.musicId);
+    base.putIfAbsent('title', () => song.title);
+    base.putIfAbsent('name', () => song.title);
+    base.putIfAbsent('singer', () => song.artist);
+    base.putIfAbsent('artist', () => song.artist);
+    base.putIfAbsent('albumName', () => song.album?.name ?? '');
+    base.putIfAbsent('albumId', () => song.album?.id ?? '');
+    base.putIfAbsent('interval',
+        () => song.duration?.inSeconds.toString() ?? '00:00');
+    base.putIfAbsent('source', () => song.sourceId);
+    return base;
+  }
 
   Future<void> dispose() => _runtime.dispose();
 }
@@ -231,6 +248,9 @@ List<MusicInfo> parseScriptSongs(Object? result, {required String sourceId}) {
       artist: artist,
       album: albumName == null ? null : Album(name: '$albumName', id: ''),
       duration: duration,
+      // 原样保留音源返回对象：MusicFree 插件取链需要 play_path_64/
+      // qualitys/musicId 等私有字段，通用模型装不下
+      raw: m,
     ));
   }
   return out;
