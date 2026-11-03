@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'audio_engine.dart';
 import 'audio_focus_policy.dart';
+import 'playback_resolver.dart' show ResolvedPlayback;
 import 'models.dart';
 
 /// 可播放条目：队列元素。resolvedUrl 为空表示尚未解析（M2 音源解析后填充）。
@@ -46,14 +47,17 @@ class PlayerCore {
   PlayerCore({
     required AudioEngine engine,
     AudioFocusPolicy? focus,
-    Future<String> Function(PlayerItem item, Set<String> excludeSources)?
+    Future<ResolvedPlayback> Function(PlayerItem item, Set<String> excludeSources)?
         urlResolver,
+    void Function(String sourceId, Object error)? onSourceUnplayable,
     Future<void> Function(PlayerItem item)? prefetcher,
   }) : _engine = engine,
         // ignore: prefer_initializing_formals
         _focus = focus,
         // ignore: prefer_initializing_formals
         _urlResolver = urlResolver,
+        // ignore: prefer_initializing_formals
+        _onSourceUnplayable = onSourceUnplayable,
         // ignore: prefer_initializing_formals
         _prefetcher = prefetcher {
     _engineSub = engine.snapshots.listen(_onEngineSnapshot);
@@ -62,8 +66,9 @@ class PlayerCore {
 
   final AudioEngine _engine;
   final AudioFocusPolicy? _focus;
-  final Future<String> Function(PlayerItem item, Set<String> excludeSources)?
+  final Future<ResolvedPlayback> Function(PlayerItem item, Set<String> excludeSources)?
       _urlResolver;
+  final void Function(String sourceId, Object error)? _onSourceUnplayable;
   final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
@@ -155,8 +160,9 @@ class PlayerCore {
       error: null,
     );
     try {
+      ResolvedPlayback? resolved;
       var url = item.resolvedUrl;
-      final failedSources = <String>{}; // 本轮已试且打不开的源
+      final failedWinners = <String>{}; // 已验证打不开的脚本实例 id
       const maxRounds = 3;
 
       for (var round = 0; round < maxRounds; round++) {
@@ -164,17 +170,20 @@ class PlayerCore {
           final resolver = _urlResolver;
           if (resolver == null) throw Exception('无可用播放地址');
           // round > 0：排除已打不开的源，强制走换源
-          url = await resolver(item, failedSources);
+          resolved = await resolver(item, failedWinners);
+          url = resolved.url;
         }
         if (gen != _loadGeneration) return;
         try {
           await _engine.load(Uri.parse(url));
           break; // 打开成功，跳出重试环
         } catch (loadErr) {
-          // URL 拿到了但打不开（死链/域名失效/5xx）：标记该源，换源重试
-          if (item.sourceId != 'local' && item.sourceId != 'url') {
-            failedSources.add(item.sourceId);
-          }
+          // URL 拿到了但打不开（死链/域名失效/5xx）：
+          // ① 拉黑胜出源 30 分钟 ② 作废该曲缓存（否则重试永远命中同一条死链）
+          // ③ 排除后重新 resolve
+          final wid = resolved?.winnerId ?? item.sourceId;
+          _onSourceUnplayable?.call(wid, loadErr);
+          failedWinners.add(wid);
           if (round == maxRounds - 1) rethrow;
           state.value = state.value
               .copyWith(processing: EngineProcessing.loading, error: null);

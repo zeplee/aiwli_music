@@ -16,11 +16,18 @@ class ResolvedPlayback {
     required this.musicId,
     required this.title,
     required this.artist,
+    required this.winnerId,
     this.toggled = false,
   });
 
   final String url;
+
+  /// 曲目所属平台/源（kw/tx/... 或脚本源 id）。
   final String sourceId;
+
+  /// 实际取链胜出的脚本实例 id（内置平台由某脚本代取时与 sourceId 不同）。
+  /// 播放器 load 失败时按它拉黑，而不是按平台名——否则排除不生效。
+  final String winnerId;
   final String sourceLabel;
   final String musicId;
   final String title;
@@ -109,6 +116,17 @@ class PlaybackResolver {
 
   String _cacheKey(String sourceId, String musicId) => '$sourceId|$musicId';
 
+  /// 播放器报告 URL 打不开：作废该曲缓存（否则重试永远命中同一条死链）。
+  void invalidateCache(String sourceId, String musicId) {
+    _urlCache.remove(_cacheKey(sourceId, musicId));
+  }
+
+  /// 某源被拉黑时，作废它名下的全部缓存条目（key 前缀 = sourceId|）。
+  void invalidateCacheAll(String sourceId) {
+    final prefix = '$sourceId|';
+    _urlCache.removeWhere((k, _) => k.startsWith(prefix));
+  }
+
   String? _cacheGet(String sourceId, String musicId) {
     final hit = _urlCache[_cacheKey(sourceId, musicId)];
     if (hit == null) return null;
@@ -179,13 +197,14 @@ class PlaybackResolver {
         '开始 source=$sourceId id=$musicId q=${quality.code} title="$title"');
 
     // —— 0. 缓存命中直接返回（切歌/重播几乎瞬时）——
-    final cached = _cacheGet(sourceId, musicId);
+    final cached = excludeIds.isEmpty ? _cacheGet(sourceId, musicId) : null;
     if (cached != null) {
       total.stop();
       AppLog.i('Resolve', '缓存命中，用时 ${total.elapsedMilliseconds}ms');
       return ResolvedPlayback(
         url: cached,
         sourceId: sourceId,
+        winnerId: sourceId,
         sourceLabel: _label(sourceId),
         musicId: musicId,
         title: title,
@@ -225,6 +244,8 @@ class PlaybackResolver {
         sourceId: c.sourceId,
         musicId: c.musicId,
         quality: quality,
+        raw: raw,
+        excludeIds: {...excludeIds, sourceId},
       );
       if (r != null) {
         total.stop();
@@ -234,6 +255,7 @@ class PlaybackResolver {
         return ResolvedPlayback(
           url: r.url,
           sourceId: c.sourceId,
+          winnerId: c.sourceId,
           sourceLabel: _label(c.sourceId),
           musicId: c.musicId,
           title: r.title,
@@ -270,20 +292,23 @@ class PlaybackResolver {
     required String musicId,
     required Quality quality,
     Map<Object?, Object?>? raw,
+    Set<String> excludeIds = const {},
   }) async {
     final isBuiltin = builtinLabels.containsKey(sourceId);
 
-    // 候选脚本源：本源（脚本/插件）或所有声明了该平台的脚本源（内置平台）
+    // 候选脚本源：本源（脚本/插件）或所有声明了该平台的脚本源（内置平台）。
+    // 排除集 = 播放器已验证「URL 打不开」的脚本实例 id。
     final candidates = <LxSource>[];
     if (isBuiltin) {
       for (final lx in _registry.enabledRuntimes) {
-        if (_isDead(lx.id)) continue;
+        if (_isDead(lx.id) || excludeIds.contains(lx.id)) continue;
         try {
           await lx.waitInited();
           if (lx.supportsPlatform(sourceId)) candidates.add(lx);
         } catch (_) {}
       }
     } else {
+      if (excludeIds.contains(sourceId) || _isDead(sourceId)) return null;
       final lx = _registry.runtimeOf(sourceId);
       if (lx != null) candidates.add(lx);
     }
@@ -307,6 +332,7 @@ class PlaybackResolver {
         quality: q,
         raw: raw,
         isBuiltin: isBuiltin,
+        excludeIds: excludeIds,
       );
       if (got != null) return got;
     }
@@ -323,10 +349,13 @@ class PlaybackResolver {
     required Quality quality,
     required Map<Object?, Object?>? raw,
     required bool isBuiltin,
+    Set<String> excludeIds = const {},
   }) async {
-    // 能力预筛选：声明了平台但没声明该音质的源直接跳过，不浪费一次请求
+    // 能力预筛选：声明了平台但没声明该音质、或已被播放器验证打不开的源
+    // 直接跳过，不浪费一次请求
     final capable = <LxSource>[];
     for (final lx in candidates) {
+      if (excludeIds.contains(lx.id)) continue;
       final qs = lx.declaredQualities;
       if (qs.isEmpty || qs.contains(quality)) capable.add(lx);
     }
@@ -367,6 +396,7 @@ class PlaybackResolver {
     return ResolvedPlayback(
       url: winner.$2,
       sourceId: sourceId,
+      winnerId: winner.$1,
       sourceLabel: _label(sourceId),
       musicId: musicId,
       title: title,

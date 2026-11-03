@@ -44,14 +44,22 @@ final sourceRegistryProvider = ChangeNotifierProvider<SourceRegistry>(
 ///
 /// [excludeSources]：播放器已试过但打不开的源（死链/域名失效），
 /// resolver 会排除它们并强制换源（配合死源黑名单 30 分钟）。
-Future<String> resolveUrl(
+Future<ResolvedPlayback> resolveUrl(
     Ref ref, PlayerItem item, Set<String> excludeSources) async {
   if (item.sourceId == 'local' || item.sourceId == 'url') {
     final url = item.resolvedUrl;
     if (url == null || url.isEmpty) throw Exception('本地条目缺地址');
-    return url;
+    return ResolvedPlayback(
+      url: url,
+      sourceId: item.sourceId,
+      winnerId: item.sourceId,
+      sourceLabel: '本地',
+      musicId: item.musicId,
+      title: item.title,
+      artist: item.artist,
+    );
   }
-  final r = await ref.read(playbackResolverProvider).resolve(
+  return ref.read(playbackResolverProvider).resolve(
     title: item.title,
     artist: item.artist,
     sourceId: item.sourceId,
@@ -60,7 +68,6 @@ Future<String> resolveUrl(
     raw: item.raw,
     excludeIds: excludeSources,
   );
-  return r.url;
 }
 
 /// 全局唯一的取链器：URL 缓存 + 「平台→成功源」记忆都在它身上，
@@ -92,6 +99,13 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
     engine: ref.read(engineProvider),
     focus: ref.read(focusPolicyProvider),
     urlResolver: (item, exclude) => resolveUrl(ref, item, exclude),
+    onSourceUnplayable: (sourceId, error) {
+      resolver.reportUnplayable(sourceId, error: error);
+      // 缓存里可能存着同一条死链，一并作废
+      for (final s in ref.read(sourceRegistryProvider).installed) {
+        if (s.id == sourceId) resolver.invalidateCacheAll(sourceId);
+      }
+    },
     // 预取下一首：播放当前曲目时后台解析下一首，切歌时直接命中缓存
     prefetcher: (item) async {
       if (item.sourceId == 'local' || item.sourceId == 'url') return;
@@ -227,7 +241,8 @@ class DownloadManager extends SafeNotifier {
     notifyListeners();
 
     try {
-      final url = await resolveUrl(_ref, item, const {});
+      final resolved = await resolveUrl(_ref, item, const {});
+      final url = resolved.url;
       task.status = '下载中';
       notifyListeners();
 

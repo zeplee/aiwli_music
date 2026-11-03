@@ -55,6 +55,7 @@ class DiscoverPage extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: InkWell(
+            key: const ValueKey('discover_search_bar'),
             borderRadius: BorderRadius.circular(12),
             onTap: onOpenSearch,
             child: Container(
