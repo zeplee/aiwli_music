@@ -119,6 +119,7 @@ class _BoardSongsPageState extends ConsumerState<BoardSongsPage> {
                               artist: m.artist,
                               sourceId: m.sourceId,
                               musicId: m.musicId,
+                              raw: m.raw,
                             )));
                         messenger.showSnackBar(SnackBar(
                             content: Text('已加入下载：${m.title}'),

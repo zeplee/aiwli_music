@@ -404,6 +404,17 @@ if (typeof console !== 'undefined') {
     } catch (_) {}
   }
 
+  /// 取消在途的 dispatch：完成其 completer（失败态）并重建实例。
+  ///
+  /// 并发取链场景：某个源已胜出，其余源的请求还挂在串行队列里，
+  /// 若任其自然超时会触发 6s 等待 + 639KB 重建级联。立即复位最划算。
+  void cancelPending() {
+    final c = _resultCompleter;
+    _resultCompleter = null;
+    c?.complete(<Object?, Object?>{'ok': false, 'error': 'cancelled'});
+    unawaited(_recreate());
+  }
+
   Future<Map<Object?, Object?>?> initedFuture({Duration timeout = const Duration(seconds: 8)}) {
     return initedCompleter.future.timeout(timeout, onTimeout: () => null);
   }

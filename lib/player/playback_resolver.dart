@@ -375,6 +375,11 @@ class PlaybackResolver {
           sw.stop();
           if (url.isNotEmpty) {
             AppLog.i('Resolve', '  ${lx.name} 成功 ${sw.elapsedMilliseconds}ms');
+            // 胜出即取消其余输家：它们还挂在各自 runtime 的串行队列上，
+            // 任其超时会触发 6s 等待 + 重建级联（现场日志证实）。
+            for (final other in candidates) {
+              if (other.id != lx.id) other.cancelPending();
+            }
             finish((lx.id, url));
           } else {
             AppLog.w('Resolve', '  ${lx.name} 空结果 ${sw.elapsedMilliseconds}ms');

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../storage/settings_store.dart';
 import 'safe_notifier.dart';
 
@@ -12,17 +14,33 @@ class PlaylistEntry {
     this.album,
     this.durationMs,
     this.resolvedPath,
+    this.rawJson,
   });
 
   factory PlaylistEntry.fromJson(Map<Object?, Object?> m) => PlaylistEntry(
-        sourceId: '${m['sourceId'] ?? ''}',
-        musicId: '${m['musicId'] ?? ''}',
-        title: '${m['title'] ?? ''}',
-        artist: '${m['artist'] ?? ''}',
+        sourceId: m['sourceId']?.toString() ?? '',
+        musicId: m['musicId']?.toString() ?? '',
+        title: m['title']?.toString() ?? '未知标题',
+        artist: m['artist']?.toString() ?? '未知歌手',
         album: m['album'] as String?,
         durationMs: (m['durationMs'] as num?)?.toInt(),
         resolvedPath: m['resolvedPath'] as String?,
+        rawJson: m['rawJson'] as String?,
       );
+
+  /// 音源返回的原始对象（JSON 序列化存储）。
+  /// kg 等平台取链需要 FileHash，通用字段装不下——丢失即无法播放。
+  final String? rawJson;
+
+  Map<Object?, Object?>? get raw {
+    final j = rawJson;
+    if (j == null || j.isEmpty) return null;
+    try {
+      return jsonDecode(j) as Map<Object?, Object?>;
+    } catch (_) {
+      return null;
+    }
+  }
 
   final String sourceId;
   final String musicId;
@@ -40,6 +58,7 @@ class PlaylistEntry {
         if (album != null) 'album': album,
         if (durationMs != null) 'durationMs': durationMs,
         if (resolvedPath != null) 'resolvedPath': resolvedPath,
+        if (rawJson != null) 'rawJson': rawJson,
       };
 }
 

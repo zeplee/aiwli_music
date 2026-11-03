@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -39,6 +41,7 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               ? Duration(milliseconds: e.durationMs!)
               : null,
           resolvedUrl: e.resolvedPath,
+          raw: e.raw,
         );
 
     return Scaffold(
@@ -359,6 +362,9 @@ class PlaylistsStrip extends ConsumerWidget {
                 artist: hit.artist,
                 album: hit.album?.name,
                 durationMs: hit.duration?.inMilliseconds,
+                rawJson: hit.raw == null
+                    ? null
+                    : jsonEncode(hit.raw!.cast<String, Object?>()),
               ));
           matched++;
         }

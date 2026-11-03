@@ -335,7 +335,8 @@ class _HotSongsSection extends ConsumerWidget {
                         title: m.title,
                         artist: m.artist,
                         sourceId: m.sourceId,
-                        musicId: m.musicId),
+                        musicId: m.musicId,
+                        raw: m.raw),
                 ];
                 core.setQueue(items, index: i);
                 Navigator.of(context).push(MaterialPageRoute<void>(
