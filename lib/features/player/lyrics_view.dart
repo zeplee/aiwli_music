@@ -229,7 +229,12 @@ class _FullLyricsPageState extends ConsumerState<FullLyricsPage> {
     }
     final doc = lyric.current.doc;
     if (doc != null && doc.lines.isNotEmpty) {
-      return _FullLyricsSheet(doc: doc, parser: const LrcParser());
+      return _FullLyricsSheet(
+        doc: doc,
+        parser: const LrcParser(),
+        translation: lyric.current.translation,
+        roman: lyric.current.roman,
+      );
     }
     return Scaffold(
       backgroundColor: Colors.black87,
@@ -252,9 +257,16 @@ class _FullLyricsPageState extends ConsumerState<FullLyricsPage> {
 }
 
 class _FullLyricsSheet extends StatefulWidget {
-  const _FullLyricsSheet({required this.doc, required this.parser});
+  const _FullLyricsSheet({
+    required this.doc,
+    required this.parser,
+    this.translation,
+    this.roman,
+  });
   final LyricDocument doc;
   final LrcParser parser;
+  final LyricDocument? translation;
+  final LyricDocument? roman;
 
   @override
   State<_FullLyricsSheet> createState() => _FullLyricsSheetState();

@@ -65,6 +65,7 @@ class MgSdk {
         if (!seen.add(copyrightId)) continue;
 
         final durNum = num.tryParse('${data['duration'] ?? 0}');
+        final pics = data['img3'] ?? data['img2'] ?? data['img1'] ?? '';
         out.add(buildSong(
           sourceId: sourceId,
           musicId: songId,
@@ -72,6 +73,7 @@ class MgSdk {
           artist: joinSingers(data['singerList']),
           album: '${data['album'] ?? ''}',
           albumId: '${data['albumId'] ?? ''}',
+          picUrl: '$pics'.isEmpty ? null : '$pics',
           duration: durNum == null ? null : Duration(seconds: durNum.round()),
           qualities: _qualitys(data),
         ));

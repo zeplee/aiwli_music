@@ -53,6 +53,7 @@ class KwSdk {
       final songId = rid.replaceFirst('MUSIC_', '');
       final minfo = '${item['N_MINFO'] ?? ''}';
       final durationNum = num.tryParse('${item['DURATION'] ?? 0}');
+      final short = '${item['web_albumpic_short'] ?? ''}';
       out.add(buildSong(
         sourceId: sourceId,
         musicId: songId,
@@ -60,6 +61,9 @@ class KwSdk {
         artist: _singer(item['ARTIST']),
         album: decodeText(item['ALBUM']),
         albumId: '${item['ALBUMID'] ?? ''}',
+        picUrl: short.isEmpty
+            ? null
+            : 'https://img2.kuwo.cn/star/albumcover/$short',
         duration: durationNum == null
             ? null
             : Duration(seconds: durationNum.round()),

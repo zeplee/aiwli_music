@@ -85,6 +85,7 @@ class PlayerPage extends ConsumerWidget {
                               title: item.title,
                               artist: item.artist,
                               album: item.album,
+                              picUrl: item.artUri?.toString(),
                               durationMs: item.duration?.inMilliseconds,
                             ),
                     icon: Icon(
@@ -348,8 +349,19 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
             ],
           ),
         ),
-        child: Icon(Icons.graphic_eq,
-            size: 60, color: Colors.white.withValues(alpha: 0.85)),
+        child: item?.artUri != null
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Image.network(
+                  item!.artUri.toString(),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
+                      size: 60,
+                      color: Colors.white.withValues(alpha: 0.85)),
+                ),
+              )
+            : Icon(Icons.graphic_eq,
+                size: 60, color: Colors.white.withValues(alpha: 0.85)),
       ),
     );
   }
@@ -442,28 +454,105 @@ Future<void> _showCoverActions(BuildContext context, WidgetRef ref,
   );
 }
 
-/// 评论页：当前音源插件未声明 comments 能力（MusicFree 标准协议
-/// 常用能力为 musicUrl/lyric/pic/musicSearch），如实显示空态。
-class _CommentsPage extends StatelessWidget {
+/// 评论页：内置多平台评论（网易热评），切歌自动拉取。
+class _CommentsPage extends ConsumerStatefulWidget {
   const _CommentsPage();
+  @override
+  ConsumerState<_CommentsPage> createState() => _CommentsPageState();
+}
+
+class _CommentsPageState extends ConsumerState<_CommentsPage> {
+  String? _key;
 
   @override
   Widget build(BuildContext context) {
+    final core = ref.watch(playerCoreProvider);
+    final item = core.current;
     final scheme = Theme.of(context).colorScheme;
+
+    if (item != null) {
+      final k = '${item.sourceId}/${item.musicId}';
+      if (k != _key) {
+        _key = k;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ref
+                .read(commentServiceProvider)
+                .fetchFor(item.sourceId, item.musicId);
+          }
+        });
+      }
+    }
+
+    final state = ref.watch(commentServiceProvider).current;
+    Widget body;
+    if (state.loading) {
+      body = Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(height: 10),
+          Text('评论加载中…',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+        ]),
+      );
+    } else if (state.items.isEmpty) {
+      body = Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.chat_bubble_outline,
+              size: 36, color: scheme.onSurfaceVariant),
+          const SizedBox(height: 8),
+          Text(state.error ?? '暂无评论',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+        ]),
+      );
+    } else {
+      body = ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        itemCount: state.items.length,
+        separatorBuilder: (_, _) => const Divider(height: 16),
+        itemBuilder: (context, i) {
+          final c = state.items[i];
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                CircleAvatar(
+                  radius: 11,
+                  backgroundColor: scheme.primaryContainer,
+                  child: Text(c.user.isEmpty ? '?' : c.user.characters.first,
+                      style: TextStyle(
+                          fontSize: 11, color: scheme.onPrimaryContainer)),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(c.user,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant)),
+                ),
+                Icon(Icons.favorite, size: 11, color: scheme.outline),
+                const SizedBox(width: 3),
+                Text('${c.likedCount}',
+                    style: TextStyle(fontSize: 11, color: scheme.outline)),
+              ]),
+              const SizedBox(height: 4),
+              Text(c.content,
+                  style: const TextStyle(fontSize: 13, height: 1.35)),
+            ],
+          );
+        },
+      );
+    }
     return ClipRRect(
       borderRadius: const BorderRadius.all(Radius.circular(20)),
       child: Container(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
-        child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.chat_bubble_outline,
-                size: 36, color: scheme.onSurfaceVariant),
-            const SizedBox(height: 8),
-            const Text('当前音源暂不支持评论',
-                style: TextStyle(fontSize: 13)),
-          ]),
-        ),
-      ),
+          color: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
+          child: body),
     );
   }
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app_providers.dart';
+import '../../../core/ui/cover_image.dart';
 import '../../../core/models/music.dart';
 import '../../../player/player_core.dart';
 import '../player/player_page.dart';
@@ -43,7 +44,6 @@ class DiscoverPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final registry = ref.watch(sourceRegistryProvider);
     final core = ref.watch(playerCoreProvider);
     final favorites = ref.watch(favoritesProvider);
     final recent = _recentOf(core);
@@ -166,11 +166,13 @@ class DiscoverPage extends ConsumerWidget {
           const _SectionHeader('我的收藏'),
           for (final f in favorites.items.take(3))
             ListTile(
-              leading: const Icon(Icons.favorite, color: Color(0xFFE57373)),
+              leading: CoverImage(url: f.picUrl, size: 44, icon: Icons.favorite),
               title: Text(f.title,
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(f.artist,
                   maxLines: 1, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.favorite, color: Color(0xFFE57373)),
+              onTap: () {},
             ),
         ],
         // —— 继续聆听 ——
@@ -198,19 +200,6 @@ class DiscoverPage extends ConsumerWidget {
             ),
           ),
         ],
-        // —— 音源状态 ——
-        const _SectionHeader('音源'),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: _SourceStatusCard(
-            activeName: registry.hasActiveSource
-                ? registry.installed
-                    .firstWhere((s) => s.id == registry.activeId)
-                    .name
-                : null,
-            installedCount: registry.installed.length,
-          ),
-        ),
         const SizedBox(height: 24),
       ]),
     );
@@ -337,6 +326,10 @@ class _HotSongsSection extends ConsumerWidget {
                         artist: m.artist,
                         sourceId: m.sourceId,
                         musicId: m.musicId,
+                        artUri: m.album?.picUrl == null ||
+                                m.album!.picUrl!.isEmpty
+                            ? null
+                            : Uri.tryParse(m.album!.picUrl!),
                         raw: m.raw),
                 ];
                 core.setQueue(items, index: i);
@@ -408,43 +401,3 @@ class _RecentCard extends StatelessWidget {
   }
 }
 
-class _SourceStatusCard extends StatelessWidget {
-  const _SourceStatusCard(
-      {required this.activeName, required this.installedCount});
-  final String? activeName;
-  final int installedCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(children: [
-        Icon(Icons.extension,
-            color: activeName != null
-                ? scheme.primary
-                : scheme.onSurfaceVariant),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('音源状态',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(
-                  activeName != null
-                      ? '活跃源：$activeName（共 $installedCount 个）'
-                      : '未启用 lx 音源——到「我的 → 音源管理」导入脚本',
-                  style:
-                      TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-                ),
-              ]),
-        ),
-      ]),
-    );
-  }
-}

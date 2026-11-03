@@ -154,6 +154,7 @@ MusicInfo buildSong({
   required String artist,
   String? album,
   String? albumId,
+  String? picUrl,
   Duration? duration,
   List<Quality>? qualities,
 }) {
@@ -162,9 +163,10 @@ MusicInfo buildSong({
     musicId: musicId,
     title: decodeText(title),
     artist: decodeText(artist),
-    album: (album == null || album.isEmpty)
-        ? null
-        : Album(name: decodeText(album), id: albumId ?? ''),
+    album: Album(
+        name: (album == null || album.isEmpty) ? '' : decodeText(album),
+        id: albumId ?? '',
+        picUrl: (picUrl == null || picUrl.isEmpty) ? null : picUrl),
     duration: duration,
     qualities: qualities ?? const [Quality.standard],
   );
@@ -182,4 +184,14 @@ dynamic tryDecodeJson(dynamic data) {
     }
   }
   return null;
+}
+
+/// 宽松 base64 解码（QQ 歌词接口返回）。
+String utf8DecodeBase64(String input) {
+  var s = input.replaceAll(RegExp(r'\s'), '');
+  s = s.replaceAll('-', '+').replaceAll('_', '/');
+  while (s.length % 4 != 0) {
+    s += '=';
+  }
+  return utf8.decode(base64Decode(s));
 }

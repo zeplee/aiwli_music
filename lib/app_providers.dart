@@ -20,6 +20,8 @@ import 'core/storage/settings_store.dart';
 import 'player/playback_resolver.dart';
 import 'player/player_core.dart';
 import 'player/providers.dart';
+import 'sources/builtin/lyric_sdk.dart';
+import 'sources/builtin/comment_sdk.dart';
 import 'sources/registry.dart';
 
 // ============ 组合根（唯一允许跨域 import 的装配层）============
@@ -99,12 +101,10 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
     engine: ref.read(engineProvider),
     focus: ref.read(focusPolicyProvider),
     urlResolver: (item, exclude) => resolveUrl(ref, item, exclude),
-    onSourceUnplayable: (sourceId, error) {
-      resolver.reportUnplayable(sourceId, error: error);
-      // 缓存里可能存着同一条死链，一并作废
-      for (final s in ref.read(sourceRegistryProvider).installed) {
-        if (s.id == sourceId) resolver.invalidateCacheAll(sourceId);
-      }
+    onSourceUnplayable: (resolved, error) {
+      resolver.reportUnplayable(resolved.winnerId, error: error);
+      // 该源名下缓存可能都是死链，一并作废
+      resolver.invalidateCacheAll(resolved.winnerId);
     },
     // 预取下一首：播放当前曲目时后台解析下一首，切歌时直接命中缓存
     prefetcher: (item) async {
@@ -162,10 +162,25 @@ final backupProvider = Provider<BackupService>((ref) => BackupService(ref));
 // ============ 歌词 ============
 
 class LyricState {
-  const LyricState({this.doc, this.loading = false, this.error});
+  const LyricState({
+    this.doc,
+    this.loading = false,
+    this.error,
+    this.translation,
+    this.roman,
+  });
   final LyricDocument? doc;
   final bool loading;
   final String? error;
+
+  /// 翻译歌词（网易 tlyric）。
+  final LyricDocument? translation;
+
+  /// 罗马音歌词（网易 romalrc）。
+  final LyricDocument? roman;
+
+  bool get hasTranslation => translation != null;
+  bool get hasRoman => roman != null;
 }
 
 class LyricService extends SafeNotifier {
@@ -190,20 +205,44 @@ class LyricService extends SafeNotifier {
     notifyListeners();
     try {
       String? lrc;
-      final registry = _ref.read(sourceRegistryProvider);
-      final lx = registry.activeRuntime;
-      if (sourceId != 'local' && lx != null) {
-        lrc = await lx.getLyricFromScript(MusicInfo(
-            sourceId: sourceId, musicId: musicId, title: '', artist: ''));
+      String? translation;
+      String? roman;
+      // ① 脚本声明 lyric 能力 → 脚本优先
+      if (sourceId != 'local') {
+        final lx = _ref.read(sourceRegistryProvider).activeRuntime;
+        if (lx != null) {
+          try {
+            lrc = await lx.getLyricFromScript(MusicInfo(
+                sourceId: sourceId, musicId: musicId, title: '', artist: ''));
+          } catch (_) {}
+        }
+      }
+      // ② 脚本没有/为空 → 内置多平台歌词（含翻译、罗马音）
+      if (lrc == null || lrc.trim().isEmpty) {
+        final r = await LyricSdk.fetch(sourceId: sourceId, musicId: musicId);
+        if (r != null) {
+          lrc = r.lyric;
+          translation = r.translation;
+          roman = r.roman;
+        }
       }
       if (_currentKey != key) return;
-      if (lrc == null || lrc.isEmpty) {
+      if (lrc == null || lrc.trim().isEmpty) {
         current = const LyricState(error: '暂无歌词');
       } else {
         final doc = _parser.parse(lrc);
         _cache[key] = doc;
-        current = LyricState(doc: doc);
+        current = LyricState(
+          doc: doc,
+          translation: (translation == null || translation.isEmpty)
+              ? null
+              : _parser.parse(translation),
+          roman: (roman == null || roman.isEmpty)
+              ? null
+              : _parser.parse(roman),
+        );
       }
+      AppLog.i('LyricService', '$key -> ${lrc?.length ?? 0} chars');
     } catch (_) {
       if (_currentKey == key) current = const LyricState(error: '歌词获取失败');
     }
@@ -213,6 +252,49 @@ class LyricService extends SafeNotifier {
 
 final lyricServiceProvider =
     ChangeNotifierProvider<LyricService>((ref) => LyricService(ref));
+
+// ============ 评论 ============
+
+class CommentState {
+  const CommentState({this.items = const [], this.loading = false, this.error});
+  final List<CommentItem> items;
+  final bool loading;
+  final String? error;
+}
+
+class CommentService extends SafeNotifier {
+  CommentService(Ref ref);
+  final Map<String, List<CommentItem>> _cache = {};
+  CommentState current = const CommentState();
+  String? _key;
+
+  Future<void> fetchFor(String sourceId, String musicId) async {
+    final key = '$sourceId/$musicId';
+    if (key == _key && current.items.isNotEmpty) return;
+    _key = key;
+    final cached = _cache[key];
+    if (cached != null) {
+      current = CommentState(items: cached);
+      notifyListeners();
+      return;
+    }
+    current = const CommentState(loading: true);
+    notifyListeners();
+    try {
+      final list = await CommentSdk.fetch(sourceId: sourceId, musicId: musicId);
+      if (_key != key) return;
+      _cache[key] = list;
+      current = CommentState(
+          items: list, error: list.isEmpty ? '当前音源暂无可获取的评论' : null);
+    } catch (e) {
+      if (_key == key) current = CommentState(error: '评论获取失败: $e');
+    }
+    notifyListeners();
+  }
+}
+
+final commentServiceProvider =
+    ChangeNotifierProvider<CommentService>((ref) => CommentService(ref));
 
 // ============ 下载（dio 流式 → MediaStore 落库）============
 

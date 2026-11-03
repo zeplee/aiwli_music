@@ -82,6 +82,7 @@ class WySdk {
       if (id.isEmpty) continue;
       final album = item['album'];
       final durMs = num.tryParse('${item['duration'] ?? 0}');
+      final pic = album is Map ? '${album['picUrl'] ?? ''}' : '';
       out.add(buildSong(
         sourceId: sourceId,
         musicId: id,
@@ -89,6 +90,7 @@ class WySdk {
         artist: _singers(item['ar'] ?? item['artists']),
         album: album is Map ? '${album['name'] ?? ''}' : '',
         albumId: album is Map ? '${album['id'] ?? ''}' : '',
+        picUrl: pic.isEmpty ? null : '$pic?param=300y300',
         duration: durMs == null ? null : Duration(milliseconds: durMs.round()),
         qualities: _qualitys(item),
       ));

@@ -114,6 +114,9 @@ class TxSdk {
         artist: joinSingers(item['singer']),
         album: album is Map ? '${album['name'] ?? ''}' : '',
         albumId: albumMid,
+        picUrl: albumMid.isEmpty
+            ? null
+            : 'https://y.gtimg.cn/music/photo_new/T002R300x300M000$albumMid.jpg',
         duration: interval == null
             ? null
             : Duration(seconds: interval.round()),

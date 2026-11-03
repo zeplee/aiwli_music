@@ -53,6 +53,9 @@ class _BoardSongsPageState extends ConsumerState<BoardSongsPage> {
           sourceId: m.sourceId,
           musicId: m.musicId,
           duration: m.duration,
+          artUri: m.album?.picUrl == null || m.album!.picUrl!.isEmpty
+              ? null
+              : Uri.tryParse(m.album!.picUrl!),
           raw: m.raw,
         ),
     ];

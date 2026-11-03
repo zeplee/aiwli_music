@@ -269,6 +269,11 @@ List<MusicInfo> parseScriptSongs(Object? result, {required String sourceId}) {
     final title = '${m['name'] ?? m['title'] ?? m['songName'] ?? '未知标题'}';
     final artist = '${m['singer'] ?? m['artist'] ?? '未知歌手'}';
     final albumName = m['albumName'] ?? m['album'];
+    // 封面：插件返回 artwork / picUrl / img；lx 脚本可能给 album 对象
+    var pic = '${m['picUrl'] ?? m['artwork'] ?? m['img'] ?? ''}';
+    if (pic.isEmpty && m['album'] is Map) {
+      pic = '${(m['album'] as Map)['picUrl'] ?? ''}';
+    }
     Duration? duration;
     final interval = m['interval'];
     final secs = interval is int ? interval : int.tryParse('$interval');
@@ -278,7 +283,10 @@ List<MusicInfo> parseScriptSongs(Object? result, {required String sourceId}) {
       musicId: songmid,
       title: title,
       artist: artist,
-      album: albumName == null ? null : Album(name: '$albumName', id: ''),
+      album: Album(
+          name: albumName == null ? '' : '$albumName',
+          id: '',
+          picUrl: pic.isEmpty ? null : pic),
       duration: duration,
       // 原样保留音源返回对象：MusicFree 插件取链需要 play_path_64/
       // qualitys/musicId 等私有字段，通用模型装不下

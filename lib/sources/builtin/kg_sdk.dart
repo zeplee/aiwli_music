@@ -43,6 +43,7 @@ class KgSdk {
         seen.add(key);
 
         final durNum = num.tryParse('${raw['Duration'] ?? 0}');
+        final img = '${raw['Image'] ?? ''}'.replaceAll('{size}', '400');
         out.add(buildSong(
           sourceId: sourceId,
           musicId: audioId, // 契约：musicId 用 Audioid；hash 由脚本自行解析
@@ -50,6 +51,7 @@ class KgSdk {
           artist: joinSingers(raw['Singers']),
           album: '${raw['AlbumName'] ?? ''}',
           albumId: '${raw['AlbumID'] ?? ''}',
+          picUrl: img.isEmpty ? null : img,
           duration: durNum == null ? null : Duration(seconds: durNum.round()),
           qualities: _qualitys(raw),
         ));

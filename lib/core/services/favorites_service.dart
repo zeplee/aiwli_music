@@ -12,6 +12,7 @@ class FavoriteItem {
     required this.title,
     required this.artist,
     this.album,
+    this.picUrl,
     this.durationMs,
     this.favoritedAt,
   });
@@ -22,6 +23,7 @@ class FavoriteItem {
         title: m['title'] as String? ?? '',
         artist: m['artist'] as String? ?? '',
         album: m['album'] as String?,
+        picUrl: m['picUrl'] as String?,
         durationMs: (m['durationMs'] as num?)?.toInt(),
         favoritedAt: m['favoritedAt'] == null
             ? null
@@ -33,6 +35,9 @@ class FavoriteItem {
   final String title;
   final String artist;
   final String? album;
+
+  /// 封面 URL（各平台 CDN 直链）。
+  final String? picUrl;
   final int? durationMs;
   final DateTime? favoritedAt;
 
@@ -42,6 +47,7 @@ class FavoriteItem {
         'title': title,
         'artist': artist,
         'album': album,
+        'picUrl': picUrl,
         'durationMs': durationMs,
         'favoritedAt': favoritedAt?.toIso8601String(),
       };
@@ -79,6 +85,7 @@ class FavoritesService extends SafeNotifier {
     required String title,
     required String artist,
     String? album,
+    String? picUrl,
     int? durationMs,
   }) async {
     await ensureLoaded();
@@ -93,6 +100,7 @@ class FavoritesService extends SafeNotifier {
         title: title,
         artist: artist,
         album: album,
+        picUrl: picUrl,
         durationMs: durationMs,
         favoritedAt: DateTime.now(),
       ));
