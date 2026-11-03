@@ -8,8 +8,11 @@ import '../../player/models.dart';
 
 /// 卡拉OK歌词：紧凑面板（播放页内嵌，当前行逐字染色）+ 点开全屏歌词页。
 class LyricsPanel extends ConsumerStatefulWidget {
-  const LyricsPanel({required this.compact, super.key});
+  const LyricsPanel({required this.compact, this.onOpenFull, super.key});
   final bool compact;
+
+  /// 点歌词区域打开全屏歌词页的回调（null = 用默认 sheet）。
+  final VoidCallback? onOpenFull;
 
   @override
   ConsumerState<LyricsPanel> createState() => _LyricsPanelState();
@@ -57,21 +60,21 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
       builder: (context, s, _) {
         final doc = lyric.current.doc;
         if (lyric.current.loading) {
-          return Center(
+          return _tappable(context,
               child: Text('歌词加载中…',
                   style: TextStyle(
                       color: scheme.onSurfaceVariant, fontSize: 13)));
         }
         if (doc == null || doc.lines.isEmpty) {
-          return Center(
-              child: Text(lyric.current.error ?? '暂无歌词',
+          return _tappable(context,
+              child: Text(lyric.current.error ?? '暂无歌词 · 点按查看',
                   style: TextStyle(
                       color: scheme.onSurfaceVariant, fontSize: 13)));
         }
         final parser = const LrcParser();
         final idx = parser.currentIndex(doc, s.position);
         if (idx < 0) {
-          return Center(
+          return _tappable(context,
               child: Text('…',
                   style: TextStyle(
                       color: scheme.onSurfaceVariant,
@@ -82,7 +85,7 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
 
         if (widget.compact) {
           return InkWell(
-            onTap: () => _openFullSheet(context, doc, parser),
+            onTap: () => _openFull(context, doc, parser),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -121,6 +124,23 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
         );
       },
     );
+  }
+
+  Widget _tappable(BuildContext context, {required Widget child}) {
+    return InkWell(
+      onTap: () => _openFull(context, null, null),
+      borderRadius: BorderRadius.circular(8),
+      child: Center(child: child),
+    );
+  }
+
+  void _openFull(BuildContext context, LyricDocument? doc, LrcParser? parser) {
+    if (widget.onOpenFull != null) {
+      widget.onOpenFull!();
+      return;
+    }
+    if (doc == null || parser == null) return;
+    _openFullSheet(context, doc, parser);
   }
 
   void _openFullSheet(
@@ -173,6 +193,60 @@ class _KaraokeLine extends StatelessWidget {
       maxLines: 2,
       overflow: TextOverflow.ellipsis,
       textAlign: TextAlign.center,
+    );
+  }
+}
+
+/// 全屏歌词页（公开）：自带数据源，播放中任何状态可打开——
+/// 有歌词显示卡拉OK滚动，无歌词/加载中显示空态。
+class FullLyricsPage extends ConsumerStatefulWidget {
+  const FullLyricsPage({required this.title, required this.artist, super.key});
+  final String title;
+  final String artist;
+
+  @override
+  ConsumerState<FullLyricsPage> createState() => _FullLyricsPageState();
+}
+
+class _FullLyricsPageState extends ConsumerState<FullLyricsPage> {
+  String? _lastFetchedKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final lyric = ref.watch(lyricServiceProvider);
+    final core = ref.watch(playerCoreProvider);
+    final item = core.current;
+    if (item != null) {
+      final key = '${item.sourceId}/${item.musicId}';
+      if (key != _lastFetchedKey) {
+        _lastFetchedKey = key;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ref.read(lyricServiceProvider).fetchFor(item.sourceId, item.musicId);
+          }
+        });
+      }
+    }
+    final doc = lyric.current.doc;
+    if (doc != null && doc.lines.isNotEmpty) {
+      return _FullLyricsSheet(doc: doc, parser: const LrcParser());
+    }
+    return Scaffold(
+      backgroundColor: Colors.black87,
+      appBar: AppBar(title: Text(widget.title.isEmpty ? '歌词' : widget.title)),
+      body: Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.lyrics, size: 48,
+              color: Theme.of(context).colorScheme.onSurfaceVariant),
+          const SizedBox(height: 12),
+          Text(lyric.current.loading
+                  ? '歌词加载中…'
+                  : lyric.current.error ?? '暂无歌词',
+              style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 14)),
+        ]),
+      ),
     );
   }
 }

@@ -89,23 +89,28 @@ class PlayerPage extends ConsumerWidget {
                   ),
                 ]),
                 const Spacer(flex: 2),
-                Container(
-                  width: double.infinity,
-                  height: 180,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        scheme.primary,
-                        const Color(0xFF8B5CF6),
-                        scheme.tertiary,
-                      ],
+                // 封面/歌词入口：点按进全屏歌词页（播放页的核心二级页）
+                InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: () => _openFullLyrics(context, ref),
+                  child: Container(
+                    width: double.infinity,
+                    height: 180,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          scheme.primary,
+                          const Color(0xFF8B5CF6),
+                          scheme.tertiary,
+                        ],
+                      ),
                     ),
+                    child: Icon(Icons.lyrics,
+                        size: 60, color: Colors.white.withValues(alpha: 0.85)),
                   ),
-                  child: Icon(Icons.graphic_eq,
-                      size: 60, color: Colors.white.withValues(alpha: 0.85)),
                 ),
                 const Spacer(),
                 Text(s.title.isEmpty ? '未在播放' : s.title,
@@ -210,6 +215,18 @@ class PlayerPage extends ConsumerWidget {
           },
         ),
       ),
+    );
+  }
+
+  void _openFullLyrics(BuildContext context, WidgetRef ref) {
+    final core = ref.read(playerCoreProvider);
+    final item = core.current;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => FullLyricsPage(
+          title: item?.title ?? '', artist: item?.artist ?? ''),
     );
   }
 
