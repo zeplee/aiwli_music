@@ -583,11 +583,20 @@ class _SearchPageState extends ConsumerState<SearchPage>
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      trailing: IconButton(
-        icon: const Icon(Icons.download_for_offline_outlined, size: 20),
-        tooltip: '下载',
-        onPressed: () => unawaited(_download(m)),
-      ),
+      // 点击行 = 进入播放页并自动播放；右侧 ▶ = 就地播放不跳转
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(
+          icon: Icon(Icons.play_circle_outline,
+              size: 22, color: scheme.primary),
+          tooltip: '播放',
+          onPressed: onTap,
+        ),
+        IconButton(
+          icon: const Icon(Icons.download_for_offline_outlined, size: 20),
+          tooltip: '下载',
+          onPressed: () => unawaited(_download(m)),
+        ),
+      ]),
       onTap: onTap,
     );
   }

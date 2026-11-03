@@ -77,11 +77,25 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(e.artist,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    tooltip: '移出歌单',
-                    onPressed: () => service.removeEntry(playlist.id, i),
-                  ),
+                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                    IconButton(
+                      icon: Icon(Icons.play_circle_outline,
+                          size: 22,
+                          color: Theme.of(context).colorScheme.primary),
+                      tooltip: '播放',
+                      onPressed: () {
+                        final items = [
+                          for (final e in playlist.entries) entryToItem(e)
+                        ];
+                        ref.read(playerCoreProvider).setQueue(items, index: i);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close, size: 20),
+                      tooltip: '移出歌单',
+                      onPressed: () => service.removeEntry(playlist.id, i),
+                    ),
+                  ]),
                   onTap: () {
                     final items = [
                       for (final e in playlist.entries) entryToItem(e)

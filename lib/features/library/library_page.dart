@@ -142,6 +142,26 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
               ];
               _play(items, i);
             },
+            trailing: IconButton(
+              icon: Icon(Icons.play_circle_outline,
+                  size: 22, color: Theme.of(context).colorScheme.primary),
+              tooltip: '播放',
+              onPressed: () {
+                final path = songs[i].data;
+                if (path.isEmpty) return;
+                _play([
+                  PlayerItem(
+                    title: songs[i].title,
+                    artist: songs[i].artist ?? '未知歌手',
+                    sourceId: 'local',
+                    musicId: '${songs[i].id}',
+                    resolvedUrl: 'file://${songs[i].data}',
+                    duration:
+                        Duration(milliseconds: songs[i].duration ?? 0),
+                  ),
+                ], 0);
+              },
+            ),
             onLongPress: () => showAddToPlaylistSheet(
               context,
               ref,

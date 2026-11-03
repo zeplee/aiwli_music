@@ -105,27 +105,36 @@ class _BoardSongsPageState extends ConsumerState<BoardSongsPage> {
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                     subtitle: Text(m.artist,
                         maxLines: 1, overflow: TextOverflow.ellipsis),
-                    trailing: IconButton(
-                      icon: const Icon(
-                          Icons.download_for_offline_outlined),
-                      tooltip: '下载',
-                      onPressed: () async {
-                        final messenger =
-                            ScaffoldMessenger.of(context);
-                        unawaited(ref
-                            .read(downloadManagerProvider)
-                            .start(PlayerItem(
-                              title: m.title,
-                              artist: m.artist,
-                              sourceId: m.sourceId,
-                              musicId: m.musicId,
-                              raw: m.raw,
-                            )));
-                        messenger.showSnackBar(SnackBar(
-                            content: Text('已加入下载：${m.title}'),
-                            duration: const Duration(seconds: 1)));
-                      },
-                    ),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                        icon: Icon(Icons.play_circle_outline,
+                            size: 22,
+                            color: Theme.of(context).colorScheme.primary),
+                        tooltip: '播放',
+                        onPressed: () => _playAll(songs, i),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                            Icons.download_for_offline_outlined),
+                        tooltip: '下载',
+                        onPressed: () async {
+                          final messenger =
+                              ScaffoldMessenger.of(context);
+                          unawaited(ref
+                              .read(downloadManagerProvider)
+                              .start(PlayerItem(
+                                title: m.title,
+                                artist: m.artist,
+                                sourceId: m.sourceId,
+                                musicId: m.musicId,
+                                raw: m.raw,
+                              )));
+                          messenger.showSnackBar(SnackBar(
+                              content: Text('已加入下载：${m.title}'),
+                              duration: const Duration(seconds: 1)));
+                        },
+                      ),
+                    ]),
                     onTap: () => _playAll(songs, i),
                   );
                 },
