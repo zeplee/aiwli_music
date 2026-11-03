@@ -116,10 +116,15 @@ class PlaybackResolver {
     void Function(String sourceLabel)? onToggle,
   }) async {
     final tried = <String>[];
+    final total = Stopwatch()..start();
+    AppLog.i('Resolve',
+        '开始 source=$sourceId id=$musicId q=${quality.code} title="$title"');
 
     // —— 0. 缓存命中直接返回（切歌/重播几乎瞬时）——
     final cached = _cacheGet(sourceId, musicId);
     if (cached != null) {
+      total.stop();
+      AppLog.i('Resolve', '缓存命中，用时 ${total.elapsedMilliseconds}ms');
       return ResolvedPlayback(
         url: cached,
         sourceId: sourceId,
@@ -141,9 +146,13 @@ class PlaybackResolver {
     );
     if (first != null) {
       _cachePut(sourceId, musicId, first.url);
+      total.stop();
+      AppLog.i('Resolve',
+          '本源取链成功，用时 ${total.elapsedMilliseconds}ms（source=$sourceId）');
       return first;
     }
     tried.add(_label(sourceId));
+    AppLog.w('Resolve', '本源取链失败，用时 ${total.elapsedMilliseconds}ms，进入换源');
 
     // —— 2. 换源：按歌名+歌手在其余源里搜索 ——
     final candidates = await _findOtherSources(title, artist, exclude: {sourceId});
@@ -159,7 +168,9 @@ class PlaybackResolver {
         quality: quality,
       );
       if (r != null) {
-        AppLog.i('PlaybackResolver', '换源成功: $sourceId → ${c.sourceId}');
+        total.stop();
+        AppLog.i('Resolve',
+            '换源成功 $sourceId → ${c.sourceId}，总用时 ${total.elapsedMilliseconds}ms');
         _cachePut(sourceId, musicId, r.url);
         return ResolvedPlayback(
           url: r.url,
@@ -173,6 +184,9 @@ class PlaybackResolver {
       }
     }
 
+    total.stop();
+    AppLog.e('Resolve',
+        '全部失败，总用时 ${total.elapsedMilliseconds}ms，已试 ${tried.join("/")}');
     throw PlaybackResolveException('所有音源都无法取到播放链接', tried);
   }
 
@@ -256,7 +270,13 @@ class PlaybackResolver {
       final qs = lx.declaredQualities;
       if (qs.isEmpty || qs.contains(quality)) capable.add(lx);
     }
-    if (capable.isEmpty) return null;
+    if (capable.isEmpty) {
+      AppLog.w('Resolve',
+          '音质 ${quality.code}: 所有候选源都不支持，跳过（不浪费时间）');
+      return null;
+    }
+    AppLog.i('Resolve',
+        '音质 ${quality.code}: 候选 ${candidates.length} → 支持 ${capable.length} 个');
 
     // 优先用上次成功的源；否则并发尝试所有候选，谁先成功用谁。
     final preferredId = _preferredFor(sourceId);
@@ -315,12 +335,21 @@ class PlaybackResolver {
 
     for (final lx in candidates) {
       unawaited(() async {
+        final sw = Stopwatch()..start();
         try {
           final url = await attempt(lx: lx, platform: platform)
               .timeout(_urlTimeout);
-          if (url.isNotEmpty) finish((lx.id, url));
+          sw.stop();
+          if (url.isNotEmpty) {
+            AppLog.i('Resolve', '  ${lx.name} 成功 ${sw.elapsedMilliseconds}ms');
+            finish((lx.id, url));
+          } else {
+            AppLog.w('Resolve', '  ${lx.name} 空结果 ${sw.elapsedMilliseconds}ms');
+          }
         } catch (e) {
-          AppLog.w('PlaybackResolver', '${lx.name} 取链失败: $e');
+          sw.stop();
+          AppLog.w('Resolve',
+              '  ${lx.name} 失败 ${sw.elapsedMilliseconds}ms: $e');
         } finally {
           pending--;
           if (pending == 0) finish(null);

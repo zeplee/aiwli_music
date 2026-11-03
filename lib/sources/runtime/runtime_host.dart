@@ -31,8 +31,12 @@ class LxRuntime {
       // 默认 15s 会让「失败源」拖慢整体——收到 5s，快速失败交给上层换源。
       : _dio = dio ?? Http.create(timeout: const Duration(seconds: 5)) {
     _createEngine();
-    _inject();
+    // 顺序至关重要：必须先注册 bridge 通道，再注入脚本。
+    // lx 脚本在 evaluate 期间就会同步调用 lx.send('inited', ...)；
+    // 若通道未注册，该消息被丢弃（日志 "No channel LxBridge registered"），
+    // initedCompleter 永不完成 → 每个脚本白等满 8s 超时。
     _registerChannels();
+    _inject();
   }
 
   final String sourceId;
@@ -44,7 +48,16 @@ class LxRuntime {
 
   JavascriptRuntime? _rt;
   Completer<Map<Object?, Object?>?>? _resultCompleter;
-  final Completer<Map<Object?, Object?>?> initedCompleter = Completer();
+  Completer<Map<Object?, Object?>?> initedCompleter =
+      Completer<Map<Object?, Object?>?>();
+
+  /// 重建实例时重置 inited 等待（否则复用已完成的 completer，
+  /// 新实例的 inited 事件无处安放）。
+  void _resetInited() {
+    if (initedCompleter.isCompleted) {
+      initedCompleter = Completer<Map<Object?, Object?>?>();
+    }
+  }
   final List<StreamSubscription<dynamic>> _dioSubs = [];
 
   Map<Object?, Object?>? get inited => _initedPayload;
@@ -381,9 +394,10 @@ if (typeof console !== 'undefined') {
       _rt?.dispose();
     } catch (_) {}
     _initedPayload = null;
+    _resetInited();
     _createEngine();
-    _inject();
     _registerChannels();
+    _inject();
     // 重新等待 inited（大部分脚本注入即 init）
     try {
       await initedFuture(timeout: const Duration(seconds: 5));
