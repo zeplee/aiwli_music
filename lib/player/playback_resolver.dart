@@ -72,6 +72,35 @@ class PlaybackResolver {
   /// 记住「哪个源成功取到过链接」，下次同平台优先用它（内存级，会话内有效）。
   final Map<String, String> _preferred = {};
 
+  /// 播放地址缓存：key = sourceId|musicId，value = (url, 过期时间)。
+  ///
+  /// 对齐 lx-music 的 `music_url` 表（取链前先查缓存，命中直接返回不发请求）。
+  /// 平台直链通常带时效（vkey 约 20 分钟～数小时），故设 TTL 保守 10 分钟；
+  /// 过期自动丢弃重取。
+  static const _urlTtl = Duration(minutes: 10);
+  final Map<String, ({String url, DateTime expireAt})> _urlCache = {};
+
+  String _cacheKey(String sourceId, String musicId) => '$sourceId|$musicId';
+
+  String? _cacheGet(String sourceId, String musicId) {
+    final hit = _urlCache[_cacheKey(sourceId, musicId)];
+    if (hit == null) return null;
+    if (DateTime.now().isAfter(hit.expireAt)) {
+      _urlCache.remove(_cacheKey(sourceId, musicId));
+      return null;
+    }
+    return hit.url;
+  }
+
+  void _cachePut(String sourceId, String musicId, String url) {
+    _urlCache[_cacheKey(sourceId, musicId)] =
+        (url: url, expireAt: DateTime.now().add(_urlTtl));
+    // 简单容量控制，避免无限增长
+    if (_urlCache.length > 200) {
+      _urlCache.remove(_urlCache.keys.first);
+    }
+  }
+
   /// 平台/源 → 上次成功的源 id。
   String? _preferredFor(String sourceId) => _preferred[sourceId];
 
@@ -87,6 +116,19 @@ class PlaybackResolver {
   }) async {
     final tried = <String>[];
 
+    // —— 0. 缓存命中直接返回（切歌/重播几乎瞬时）——
+    final cached = _cacheGet(sourceId, musicId);
+    if (cached != null) {
+      return ResolvedPlayback(
+        url: cached,
+        sourceId: sourceId,
+        sourceLabel: _label(sourceId),
+        musicId: musicId,
+        title: title,
+        artist: artist,
+      );
+    }
+
     // —— 1. 首选：曲目自己的源 ——
     final first = await _tryOne(
       title: title,
@@ -96,7 +138,10 @@ class PlaybackResolver {
       quality: quality,
       raw: raw,
     );
-    if (first != null) return first;
+    if (first != null) {
+      _cachePut(sourceId, musicId, first.url);
+      return first;
+    }
     tried.add(_label(sourceId));
 
     // —— 2. 换源：按歌名+歌手在其余源里搜索 ——
@@ -114,6 +159,7 @@ class PlaybackResolver {
       );
       if (r != null) {
         AppLog.i('PlaybackResolver', '换源成功: $sourceId → ${c.sourceId}');
+        _cachePut(sourceId, musicId, r.url);
         return ResolvedPlayback(
           url: r.url,
           sourceId: c.sourceId,

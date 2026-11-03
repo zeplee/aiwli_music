@@ -51,7 +51,7 @@ Future<String> resolveUrl(Ref ref, PlayerItem item) async {
     if (url == null || url.isEmpty) throw Exception('本地条目缺地址');
     return url;
   }
-  final r = await PlaybackResolver(ref.read(sourceRegistryProvider)).resolve(
+  final r = await ref.read(playbackResolverProvider).resolve(
     title: item.title,
     artist: item.artist,
     sourceId: item.sourceId,
@@ -62,11 +62,34 @@ Future<String> resolveUrl(Ref ref, PlayerItem item) async {
   return r.url;
 }
 
+/// 全局唯一的取链器：URL 缓存 + 「平台→成功源」记忆都在它身上，
+/// 必须是单例，否则每次访问都要重新建，缓存形同虚设。
+final playbackResolverProvider = Provider<PlaybackResolver>((ref) {
+  return PlaybackResolver(ref.watch(sourceRegistryProvider));
+});
+
 final playerCoreProvider = Provider<PlayerCore>((ref) {
+  final resolver = ref.watch(playbackResolverProvider);
   final core = PlayerCore(
     engine: ref.watch(engineProvider),
     focus: ref.watch(focusPolicyProvider),
     urlResolver: (item) => resolveUrl(ref, item),
+    // 预取下一首：播放当前曲目时后台解析下一首，切歌时直接命中缓存
+    prefetcher: (item) async {
+      if (item.sourceId == 'local' || item.sourceId == 'url') return;
+      try {
+        await resolver.resolve(
+          title: item.title,
+          artist: item.artist,
+          sourceId: item.sourceId,
+          musicId: item.musicId,
+          quality: ref.read(appSettingsProvider).quality,
+          raw: item.raw,
+        );
+      } catch (_) {
+        // 预取失败无所谓，真正播放时会重试
+      }
+    },
   );
   ref.onDispose(core.dispose);
   return core;

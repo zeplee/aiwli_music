@@ -27,7 +27,9 @@ class LxActionResult {
 /// 已知约束（spike H6）：同步 evaluate 无法中断死循环 → 超时后整个实例废弃重建。
 class LxRuntime {
   LxRuntime(this.sourceId, this.script, {Dio? dio, this.musicFree = false})
-      : _dio = dio ?? Http.create() {
+      // 脚本取链走的是第三方免费接口，经常挂死不返回。
+      // 默认 15s 会让「失败源」拖慢整体——收到 5s，快速失败交给上层换源。
+      : _dio = dio ?? Http.create(timeout: const Duration(seconds: 5)) {
     _createEngine();
     _inject();
     _registerChannels();

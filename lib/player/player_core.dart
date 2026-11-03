@@ -47,11 +47,14 @@ class PlayerCore {
     required AudioEngine engine,
     AudioFocusPolicy? focus,
     Future<String> Function(PlayerItem item)? urlResolver,
+    Future<void> Function(PlayerItem item)? prefetcher,
   }) : _engine = engine,
         // ignore: prefer_initializing_formals
         _focus = focus,
         // ignore: prefer_initializing_formals
-        _urlResolver = urlResolver {
+        _urlResolver = urlResolver,
+        // ignore: prefer_initializing_formals
+        _prefetcher = prefetcher {
     _engineSub = engine.snapshots.listen(_onEngineSnapshot);
     _focusSub = _focus?.events.listen(_onFocusEvent);
   }
@@ -59,6 +62,7 @@ class PlayerCore {
   final AudioEngine _engine;
   final AudioFocusPolicy? _focus;
   final Future<String> Function(PlayerItem item)? _urlResolver;
+  final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
 
@@ -160,6 +164,7 @@ class PlayerCore {
       if (gen != _loadGeneration) return; // 已被更新的一次切歌覆盖
       await _engine.play();
       _expectCompletion = true;
+      _prefetchNext();
     } catch (e) {
       if (gen != _loadGeneration) return;
       state.value = state.value.copyWith(
@@ -183,6 +188,19 @@ class PlayerCore {
   }
 
   Future<void> seek(Duration pos) => _engine.seek(pos);
+
+  /// 后台预取下一首的播放地址（写入 resolver 的 URL 缓存）。
+  /// 切歌时命中缓存即可瞬时出声，不必重新取链。
+  void _prefetchNext() {
+    final pf = _prefetcher;
+    if (pf == null || _queue.length < 2) return;
+    final nextIndex = _index + 1;
+    if (nextIndex >= _queue.length) return;
+    final item = _queue[nextIndex];
+    if (item.resolvedUrl?.isNotEmpty == true) return;
+    // 不 await：后台进行，失败无影响
+    unawaited(pf(item));
+  }
 
   Future<void> next({bool auto = false}) async {
     if (_queue.isEmpty) return;
