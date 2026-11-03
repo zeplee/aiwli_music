@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,6 +9,8 @@ import '../../player/models.dart';
 import 'lyrics_view.dart';
 import '../../player/player_core.dart';
 import 'player_extras.dart';
+import '../library/playlist_pages.dart';
+import '../../core/services/playlists.dart';
 
 class PlayerPage extends ConsumerWidget {
   const PlayerPage({super.key});
@@ -72,7 +76,7 @@ class PlayerPage extends ConsumerWidget {
                     ),
                   ),
                   IconButton(
-                    tooltip: isFav ? '取消收藏' : '收藏',
+                    tooltip: isFav ? '已收藏 · 点击取消' : '收藏到「我的收藏」',
                     onPressed: item == null
                         ? null
                         : () => favorites.toggle(
@@ -322,13 +326,14 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
     final item = widget.item;
     return InkWell(
       borderRadius: BorderRadius.circular(20),
+      // 封面点击 = 当前歌曲操作菜单（对齐参考工程 player_cover_actions_sheet）
       onTap: item == null
           ? null
-          : () {
-              _controller.animateToPage(1,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeOut);
-            },
+          : () => _showCoverActions(context, ref, item, () {
+                _controller.animateToPage(1,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeOut);
+              }),
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
@@ -348,6 +353,93 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
       ),
     );
   }
+}
+
+/// 封面操作菜单：添加到歌单 / 下载 / 切换音质 / 跳到歌词页。
+/// 对齐参考工程动作集（playlist_add / download / high_quality / subtitles）。
+Future<void> _showCoverActions(BuildContext context, WidgetRef ref,
+    PlayerItem item, VoidCallback onOpenLyrics) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (ctx) {
+      final scheme = Theme.of(ctx).colorScheme;
+      return SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+                Text(item.artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onSurfaceVariant)),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.playlist_add),
+            title: const Text('添加到歌单'),
+            subtitle: const Text('选择歌单并加入当前歌曲'),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              showAddToPlaylistSheet(
+                context,
+                ref,
+                PlaylistEntry(
+                  sourceId: item.sourceId,
+                  musicId: item.musicId,
+                  title: item.title,
+                  artist: item.artist,
+                  album: item.album,
+                  durationMs: item.duration?.inMilliseconds,
+                  rawJson: item.raw == null
+                      ? null
+                      : jsonEncode(item.raw!.cast<String, Object?>()),
+                ),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.download),
+            title: const Text('下载当前歌曲'),
+            subtitle: Text(item.sourceId == 'local'
+                ? '本地歌曲无需下载'
+                : '选择音质并下载当前在线歌曲'),
+            enabled: item.sourceId != 'local',
+            onTap: () {
+              Navigator.of(ctx).pop();
+              ref.read(downloadManagerProvider).start(item);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.high_quality),
+            title: const Text('切换播放音质'),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              showQualitySheet(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.lyrics_outlined),
+            title: const Text('查看歌词'),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              onOpenLyrics();
+            },
+          ),
+          const SizedBox(height: 8),
+        ]),
+      );
+    },
+  );
 }
 
 /// 评论页：当前音源插件未声明 comments 能力（MusicFree 标准协议
