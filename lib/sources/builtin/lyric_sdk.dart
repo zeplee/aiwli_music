@@ -1,44 +1,116 @@
 import '../../core/services/logger.dart';
 import 'builtin_base.dart';
 
-/// 内置歌词获取：多平台直连（不依赖音源脚本）。
+/// 内置歌词获取。
 ///
-/// 优先级：酷我（有逐字 krc 但此处先取 lrc）→ 网易（含翻译/罗马音）→ QQ。
-/// 全部失败返回 null，上层显示"暂无歌词"。
+/// 关键设计：**不能直接拿曲目 id 跨平台查歌词**——各平台 id 空间不同
+/// （酷我 142997 在网易是另一首歌）。正确做法是把「歌名 + 歌手」发到
+/// 目标平台的搜索接口，拿到该平台自己的 id，再取歌词。
 class LyricSdk {
   LyricSdk._();
 
-  /// 取歌词。返回 lrc 文本 + 可选翻译/罗马音。
+  static const _ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+      'AppleWebKit/537.36 Chrome/126.0 Safari/537.36';
+
+  /// 取歌词。[title]/[artist] 用于跨平台匹配。
   static Future<LrcResult?> fetch({
     required String sourceId,
     required String musicId,
+    required String title,
+    required String artist,
   }) async {
-    // 酷我 id 形如 kw_123 / 纯数字
-    final kwId = musicId.replaceFirst(RegExp(r'^kw_'), '');
-    final wyId = musicId.replaceFirst(RegExp(r'^wy_'), '');
-    final txMid = musicId.replaceFirst(RegExp(r'^tx_'), '');
+    // ① 曲目所属平台的官方 id 直查（同平台 id 空间一致，最准）
+    final direct = await _direct(sourceId, musicId);
+    if (direct != null) return direct;
 
-    if (sourceId == 'wy' || wyId != musicId) {
-      final r = await _fromWy(wyId);
-      if (r != null) return r;
-    }
-    if (sourceId == 'kw' || kwId != musicId) {
-      final r = await _fromKw(kwId);
-      if (r != null) return r;
-    }
-    if (sourceId == 'tx' || txMid != musicId) {
-      final r = await _fromTx(txMid);
-      if (r != null) return r;
-    }
-    return null;
+    // ② 跨平台：搜歌名+歌手 → 拿该平台 id → 取歌词
+    return _viaSearch(title, artist);
   }
 
-  /// 酷我：lrclist / 逐字 krc。公开接口。
-  static Future<LrcResult?> _fromKw(String id) async {
+  static Future<LrcResult?> _direct(String sourceId, String musicId) async {
+    final id = musicId.replaceFirst(RegExp(r'^(kw|wy|tx|kg|mg)_'), '');
+    switch (sourceId) {
+      case 'wy':
+        return _wyLyric(id);
+      case 'tx':
+        return _txLyric(id);
+      case 'kw':
+        return _kwLyric(id);
+      default:
+        return null;
+    }
+  }
+
+  /// 跨平台兜底：网易搜索（接口稳定、返回翻译/罗马音）。
+  static Future<LrcResult?> _viaSearch(String title, String artist) async {
+    final q = '$title $artist'.trim();
+    if (q.isEmpty) return null;
     try {
-      final raw = await BuiltinHttp.getJson(
+      final raw = await BuiltinHttp.getRaw(
+        'https://music.163.com/api/search/get'
+        '?s=${Uri.encodeComponent(q)}&type=1&limit=3',
+        headers: const {'Referer': 'https://music.163.com/', 'User-Agent': _ua},
+      );
+      final body = tryDecodeJson(raw);
+      if (body is! Map) return null;
+      final songs = (body['result'] as Map?)?['songs'];
+      if (songs is! List || songs.isEmpty) return null;
+
+      String? pick;
+      for (final s in songs) {
+        if (s is! Map) continue;
+        final name = '${s['name'] ?? ''}';
+        final singers = [
+          for (final a in (s['artists'] as List? ?? const []))
+            if (a is Map) '${a['name'] ?? ''}',
+        ].join('/');
+        if (!_similar(name, title)) continue;
+        if (artist.isNotEmpty && !_similar(singers, artist)) continue;
+        pick = '${s['id']}';
+        break;
+      }
+      pick ??= '${(songs.first as Map)['id']}';
+      if (pick.isEmpty) return null;
+      AppLog.i('LyricSdk', '跨平台匹配「$title - $artist」→ wy:$pick');
+      return await _wyLyric(pick);
+    } catch (e) {
+      AppLog.w('LyricSdk', '跨平台歌词搜索失败: $e');
+      return null;
+    }
+  }
+
+  /// 网易：含翻译 tlyric / 罗马音 romalrc。
+  static Future<LrcResult?> _wyLyric(String id) async {
+    try {
+      final raw = await BuiltinHttp.getRaw(
+        'https://music.163.com/api/song/lyric?id=$id&lv=-1&kv=-1&tv=-1&rv=-1',
+        headers: const {'Referer': 'https://music.163.com/', 'User-Agent': _ua},
+      );
+      final body = tryDecodeJson(raw);
+      if (body is! Map) return null;
+      final lrc = (body['lrc'] as Map?)?['lyric'] as String?;
+      if (lrc == null || lrc.trim().isEmpty) return null;
+      final tl = (body['tlyric'] as Map?)?['lyric'] as String?;
+      final ro = (body['romalrc'] as Map?)?['lyric'] as String?;
+      AppLog.i('LyricSdk',
+          '网易歌词命中 id=$id len=${lrc.length} 译=${tl?.length ?? 0} 罗=${ro?.length ?? 0}');
+      return LrcResult(lrc, translation: tl, roman: ro);
+    } catch (e) {
+      AppLog.w('LyricSdk', '网易歌词失败 id=$id: $e');
+      return null;
+    }
+  }
+
+  /// 酷我：mobile 接口（常 301，失败交给跨平台兜底）。
+  static Future<LrcResult?> _kwLyric(String id) async {
+    try {
+      final raw = await BuiltinHttp.getRaw(
         'https://m.kuwo.cn/newh5/singles/songinfoandlrc?musicId=$id',
-        headers: const {'Referer': 'https://m.kuwo.cn/'},
+        headers: const {
+          'Referer': 'https://m.kuwo.cn/',
+          'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like '
+              'Mac OS X) AppleWebKit/605.1.15',
+        },
       );
       final body = tryDecodeJson(raw);
       if (body is! Map) return null;
@@ -50,73 +122,56 @@ class LyricSdk {
         final t = num.tryParse('${e['time'] ?? ''}');
         final text = '${e['lineLyric'] ?? ''}';
         if (t == null || text.isEmpty) continue;
-        final sec = t;
-        final m = (sec ~/ 60).toString().padLeft(2, '0');
-        final s = (sec % 60).toStringAsFixed(2).padLeft(5, '0');
+        final m = (t ~/ 60).toString().padLeft(2, '0');
+        final s = (t % 60).toStringAsFixed(2).padLeft(5, '0');
         buf.writeln('[$m:$s]$text');
       }
       final lrc = buf.toString();
       if (lrc.trim().isEmpty) return null;
       AppLog.i('LyricSdk', '酷我歌词命中 id=$id');
       return LrcResult(lrc);
-    } catch (_) {
+    } catch (e) {
+      AppLog.w('LyricSdk', '酷我歌词失败 id=$id: $e');
       return null;
     }
   }
 
-  /// 网易：eapi 歌词（含翻译 tlyric / 罗马音 romalrc）。
-  static Future<LrcResult?> _fromWy(String id) async {
+  /// QQ：base64 返回。
+  static Future<LrcResult?> _txLyric(String mid) async {
     try {
-      final raw = await BuiltinHttp.getJson(
-        'https://music.163.com/api/song/lyric?id=$id&lv=1&kv=1&tv=1&rv=1',
-        headers: const {
-          'Referer': 'https://music.163.com/',
-          'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
+      final raw = await BuiltinHttp.getRaw(
+        'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg'
+        '?songmid=$mid&format=json&nobase64=0&g_tk=5381',
+        headers: const {'Referer': 'https://y.qq.com/', 'User-Agent': _ua},
       );
       final body = tryDecodeJson(raw);
       if (body is! Map) return null;
-      final lrc = body['lrc']?['lyric'] as String?;
-      if (lrc == null || lrc.trim().isEmpty) return null;
-      final tlyric = body['tlyric']?['lyric'] as String?;
-      final romalrc = body['romalrc']?['lyric'] as String?;
-      AppLog.i('LyricSdk',
-          '网易歌词命中 id=$id 长度=${lrc.length} 翻译=${tlyric?.length ?? 0} 罗马音=${romalrc?.length ?? 0}');
-      return LrcResult(lrc, translation: tlyric, roman: romalrc);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// QQ 音乐：fcg 歌词接口（base64 返回）。
-  static Future<LrcResult?> _fromTx(String mid) async {
-    try {
-      final raw = await BuiltinHttp.getJson(
-        'https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg'
-        '?songmid=$mid&format=json&nobase64=0&g_tk=5381',
-        headers: const {'Referer': 'https://y.qq.com/'},
-      );
-      var body = tryDecodeJson(raw);
-      if (body is! Map) return null;
       final lrc = body['lyric'] as String?;
       if (lrc == null || lrc.isEmpty) return null;
-      final decoded = _maybeBase64(lrc);
+      final decoded = lrc.contains('[') ? lrc : utf8DecodeBase64(lrc);
       if (decoded.trim().isEmpty) return null;
+      final tl = body['trans'] as String?;
       AppLog.i('LyricSdk', 'QQ歌词命中 mid=$mid');
-      return LrcResult(decoded);
-    } catch (_) {
+      return LrcResult(
+        decoded,
+        translation: (tl == null || tl.isEmpty)
+            ? null
+            : (tl.contains('[') ? tl : utf8DecodeBase64(tl)),
+      );
+    } catch (e) {
+      AppLog.w('LyricSdk', 'QQ歌词失败 mid=$mid: $e');
       return null;
     }
   }
 
-  static String _maybeBase64(String s) {
-    if (s.contains('[')) return s; // 已是明文 lrc
-    try {
-      return utf8DecodeBase64(s);
-    } catch (_) {
-      return s;
-    }
+  static bool _similar(String a, String b) {
+    String norm(String s) => s
+        .toLowerCase()
+        .replaceAll(RegExp(r'[\s\-_·,，、&()（）\[\]【】]'), '');
+    final x = norm(a);
+    final y = norm(b);
+    if (x.isEmpty || y.isEmpty) return false;
+    return x.contains(y) || y.contains(x);
   }
 }
 

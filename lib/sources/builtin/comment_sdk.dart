@@ -36,7 +36,7 @@ class CommentSdk {
   /// 网易云热评（旧版公开接口，无需 eapi 加密）。
   static Future<List<CommentItem>> _wyHot(String id, int limit) async {
     try {
-      final raw = await BuiltinHttp.getJson(
+      final raw = await BuiltinHttp.getRaw(
         'https://music.163.com/api/v1/resource/comments/R_SO_4_$id'
         '?limit=$limit&offset=0',
         headers: const {

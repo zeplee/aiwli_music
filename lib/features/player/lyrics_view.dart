@@ -37,7 +37,9 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
         _lastFetchedKey = key;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            ref.read(lyricServiceProvider).fetchFor(item.sourceId, item.musicId);
+            ref.read(lyricServiceProvider).fetchFor(
+                  item.sourceId, item.musicId,
+                  title: item.title, artist: item.artist);
           }
         });
       }
@@ -222,7 +224,9 @@ class _FullLyricsPageState extends ConsumerState<FullLyricsPage> {
         _lastFetchedKey = key;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            ref.read(lyricServiceProvider).fetchFor(item.sourceId, item.musicId);
+            ref.read(lyricServiceProvider).fetchFor(
+                  item.sourceId, item.musicId,
+                  title: item.title, artist: item.artist);
           }
         });
       }

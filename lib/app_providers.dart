@@ -192,7 +192,8 @@ class LyricService extends SafeNotifier {
   LyricState current = const LyricState();
   String? _currentKey;
 
-  Future<void> fetchFor(String sourceId, String musicId) async {
+  Future<void> fetchFor(String sourceId, String musicId,
+      {String title = '', String artist = ''}) async {
     final key = '$sourceId/$musicId';
     _currentKey = key;
     final cached = _cache[key];
@@ -219,7 +220,11 @@ class LyricService extends SafeNotifier {
       }
       // ② 脚本没有/为空 → 内置多平台歌词（含翻译、罗马音）
       if (lrc == null || lrc.trim().isEmpty) {
-        final r = await LyricSdk.fetch(sourceId: sourceId, musicId: musicId);
+        final r = await LyricSdk.fetch(
+            sourceId: sourceId,
+            musicId: musicId,
+            title: title,
+            artist: artist);
         if (r != null) {
           lrc = r.lyric;
           translation = r.translation;
