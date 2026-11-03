@@ -68,11 +68,22 @@ final playbackResolverProvider = Provider<PlaybackResolver>((ref) {
   return PlaybackResolver(ref.watch(sourceRegistryProvider));
 });
 
+/// 进程级 PlayerCore 单例。
+///
+/// 之前用 `ref.watch(...)` 建立依赖：任何上游 provider 重建都会导致本
+/// provider 被 dispose 并新建 core，而 UI / 播放页仍持有旧 core，
+/// 旧 core 的引擎又已被回收 → `Assertion failed: "[Player] has been disposed"`。
+/// 改为 `ref.read` + 单一实例，生命周期跟随进程。
+PlayerCore? _coreSingleton;
+
 final playerCoreProvider = Provider<PlayerCore>((ref) {
-  final resolver = ref.watch(playbackResolverProvider);
+  final existing = _coreSingleton;
+  if (existing != null) return existing;
+
+  final resolver = ref.read(playbackResolverProvider);
   final core = PlayerCore(
-    engine: ref.watch(engineProvider),
-    focus: ref.watch(focusPolicyProvider),
+    engine: ref.read(engineProvider),
+    focus: ref.read(focusPolicyProvider),
     urlResolver: (item) => resolveUrl(ref, item),
     // 预取下一首：播放当前曲目时后台解析下一首，切歌时直接命中缓存
     prefetcher: (item) async {
@@ -91,7 +102,7 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
       }
     },
   );
-  ref.onDispose(core.dispose);
+  _coreSingleton = core;
   return core;
 });
 

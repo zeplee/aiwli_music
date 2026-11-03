@@ -245,9 +245,12 @@ class PlayerCore {
   /// 定时关闭（播完当前首）：置位后 auto 完成时暂停而非切下一首。
   void setEndOfTrackPause(bool v) => _endOfTrackPause = v;
 
+  /// 只解除订阅，**不销毁引擎**。
+  ///
+  /// 引擎/Player 是进程级原生资源，且 core 为单例；若在此 dispose 引擎，
+  /// 任何仍持有本 core 的调用都会抛 `[Player] has been disposed`。
   Future<void> dispose() async {
     await _engineSub?.cancel();
     await _focusSub?.cancel();
-    await _engine.dispose();
   }
 }
