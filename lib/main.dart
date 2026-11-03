@@ -14,6 +14,7 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // 日志落盘（release 包也要能取证：developer.log 不进 logcat）
   unawaited(AppLog.init());
+  AppLog.installErrorHooks();
   MediaKit.ensureInitialized();
   final container = ProviderContainer();
   // 桌面全局快捷键（Windows/macOS/Linux，失败静默降级）

@@ -65,6 +65,8 @@ dependencies:
   html: ^0.15.0
 
 dev_dependencies:
+  flutter_driver:
+    sdk: flutter
   flutter_test:
     sdk: flutter
 

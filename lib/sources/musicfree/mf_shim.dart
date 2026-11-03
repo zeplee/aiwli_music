@@ -13,6 +13,13 @@ class MusicFreeShim {
   /// 依赖宿主已注入的 globalThis.lx（含 utils.crypto / buffer）。
   static const String bootstrap = r'''
 // ---------- CommonJS 运行时（最小实现）----------
+globalThis.__mfBigIntOp = function (op, a, b, aradix, c) {
+  return sendMessage('LxBigInt', JSON.stringify({
+    op: op, a: a == null ? '' : String(a), b: b == null ? '' : String(b),
+    aradix: aradix || 10, c: c == null ? '' : String(c),
+  }));
+};
+
 globalThis.__mfModules = {};
 globalThis.__mfCache = {};
 
@@ -261,13 +268,52 @@ globalThis.__mfRequire = function (name) {
   if (n === 'cheerio') return globalThis.__mfCheerio;
   if (n === '@react-native-cookies/cookies') return globalThis.__mfCookies;
   if (n === 'big-integer' || n === 'bigint') {
-    return function (v) {
+    // Android 打包的 QuickJS 未启用 BigInt（函数都不存在）。
+    // 所有大数运算代理到 Dart 原生 BigInt（走 LxBigInt 同步桥）。
+    function strOf(o) {
+      return (o && o.__isBigInt) ? o.__str : String(o);
+    }
+    function wrap(str, radix) {
       return {
-        toString: function () { return String(v); },
-        add: function (o) { return globalThis.__mfRequire('big-integer')(String(Number(v) + Number(o))); },
-        multiply: function (o) { return globalThis.__mfRequire('big-integer')(String(Number(v) * Number(o))); },
+        __isBigInt: true,
+        __str: String(str),
+        __radix: radix || 10,
+        toString: function (rad) {
+          var r = rad || this.__radix || 10;
+          if (r === this.__radix) return this.__str;
+          return globalThis.__mfBigIntOp('convert', this.__str, '', this.__radix, r);
+        },
+        valueOf: function () { return Number(globalThis.__mfBigIntOp('convert', this.__str, '', this.__radix, 10)); },
+        add: function (o) { return wrap(globalThis.__mfBigIntOp('add', this.__str, strOf(o), this.__radix), this.__radix); },
+        minus: function (o) { return wrap(globalThis.__mfBigIntOp('minus', this.__str, strOf(o), this.__radix), this.__radix); },
+        multiply: function (o) { return wrap(globalThis.__mfBigIntOp('multiply', this.__str, strOf(o), this.__radix), this.__radix); },
+        divide: function (o) { return wrap(globalThis.__mfBigIntOp('divide', this.__str, strOf(o), this.__radix), this.__radix); },
+        mod: function (o) { return wrap(globalThis.__mfBigIntOp('mod', this.__str, strOf(o), this.__radix), this.__radix); },
+        modPow: function (e, m) {
+          return wrap(globalThis.__mfBigIntOp('modPow', this.__str, strOf(e), this.__radix, strOf(m)), this.__radix);
+        },
+        compare: function (o) { return Number(globalThis.__mfBigIntOp('cmp', this.__str, strOf(o), this.__radix)); },
+        greater: function (o) { return this.compare(o) > 0; },
+        lesser: function (o) { return this.compare(o) < 0; },
+        equals: function (o) { return this.compare(o) === 0; },
+        isZero: function () { return this.__str === '0' || this.__str === ''; },
+        isNegative: function () { return this.__str.charAt(0) === '-'; },
+        abs: function () {
+          var w = wrap(this.__str, this.__radix);
+          if (w.isNegative()) w.__str = this.__str.substring(1);
+          return w;
+        },
       };
+    }
+    var bigIntFn = function (v, radix) {
+      radix = radix || 10;
+      if (v && v.__isBigInt) return wrap(v.__str, v.__radix);
+      if (typeof v === 'number') v = String(Math.trunc(v));
+      return wrap(String(v).trim() === '' ? '0' : String(v).trim(), radix);
     };
+    bigIntFn.zero = function () { return bigIntFn(0); };
+    bigIntFn.one = function () { return bigIntFn(1); };
+    return bigIntFn;
   }
   if (n === 'webdav') return {};
   if (globalThis.__mfModules[n]) return globalThis.__mfModules[n];

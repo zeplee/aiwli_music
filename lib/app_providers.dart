@@ -42,10 +42,10 @@ final sourceRegistryProvider = ChangeNotifierProvider<SourceRegistry>(
 
 /// URL 解析：local 直用；其余按「曲目所属源」取链，失败自动换源。
 ///
-/// 修正：此前一律用 activeRuntime（活跃源）取链，导致搜索结果里
-/// 其他源的曲目全部失败。现在交给 [PlaybackResolver]：先试本源，
-/// 失败后按歌名+歌手在其他源重新搜索并重试。
-Future<String> resolveUrl(Ref ref, PlayerItem item) async {
+/// [excludeSources]：播放器已试过但打不开的源（死链/域名失效），
+/// resolver 会排除它们并强制换源（配合死源黑名单 30 分钟）。
+Future<String> resolveUrl(
+    Ref ref, PlayerItem item, Set<String> excludeSources) async {
   if (item.sourceId == 'local' || item.sourceId == 'url') {
     final url = item.resolvedUrl;
     if (url == null || url.isEmpty) throw Exception('本地条目缺地址');
@@ -58,6 +58,7 @@ Future<String> resolveUrl(Ref ref, PlayerItem item) async {
     musicId: item.musicId,
     quality: ref.read(appSettingsProvider).quality,
     raw: item.raw,
+    excludeIds: excludeSources,
   );
   return r.url;
 }
@@ -90,7 +91,7 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
   final core = PlayerCore(
     engine: ref.read(engineProvider),
     focus: ref.read(focusPolicyProvider),
-    urlResolver: (item) => resolveUrl(ref, item),
+    urlResolver: (item, exclude) => resolveUrl(ref, item, exclude),
     // 预取下一首：播放当前曲目时后台解析下一首，切歌时直接命中缓存
     prefetcher: (item) async {
       if (item.sourceId == 'local' || item.sourceId == 'url') return;
@@ -226,7 +227,7 @@ class DownloadManager extends SafeNotifier {
     notifyListeners();
 
     try {
-      final url = await resolveUrl(_ref, item);
+      final url = await resolveUrl(_ref, item, const {});
       task.status = '下载中';
       notifyListeners();
 

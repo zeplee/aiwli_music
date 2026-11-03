@@ -73,6 +73,27 @@ class PlaybackResolver {
   /// 记住「哪个源成功取到过链接」，下次同平台优先用它（内存级，会话内有效）。
   final Map<String, String> _preferred = {};
 
+  /// 死源/坏源记忆：URL 取到但播放器打不开（如域名 NXDOMAIN、5xx），
+  /// 30 分钟内不再为任何曲目选它。lx 生态上游随时会死，这是常态。
+  final Map<String, DateTime> _deadUntil = {};
+  static const _deadPenalty = Duration(minutes: 30);
+
+  bool _isDead(String sourceId) {
+    final t = _deadUntil[sourceId];
+    if (t == null) return false;
+    if (DateTime.now().isAfter(t)) {
+      _deadUntil.remove(sourceId);
+      return false;
+    }
+    return true;
+  }
+
+  /// 播放器报告「这个源的 URL 打不开」。
+  void reportUnplayable(String sourceId, {Object? error}) {
+    _deadUntil[sourceId] = DateTime.now().add(_deadPenalty);
+    AppLog.w('Resolve', '标记坏源 $sourceId（30min 内跳过）: $error');
+  }
+
   /// 在途请求去重：同一首歌并发触发（点播+预取+自动下一首）时，
   /// 后到者复用同一个 Future，避免同时压到同一个 LxRuntime 串行队列
   /// 造成 dispatch 超时连锁重建。
@@ -119,8 +140,10 @@ class PlaybackResolver {
     required Quality quality,
     Map<Object?, Object?>? raw,
     void Function(String sourceLabel)? onToggle,
+    Set<String> excludeIds = const {},
   }) {
-    final key = _cacheKey(sourceId, musicId);
+    final ex = excludeIds.join(',');
+    final key = '${_cacheKey(sourceId, musicId)}|ex=$ex';
     final inflight = _inFlight[key];
     if (inflight != null) {
       AppLog.i('Resolve', '在途复用 $key');
@@ -134,6 +157,7 @@ class PlaybackResolver {
       quality: quality,
       raw: raw,
       onToggle: onToggle,
+      excludeIds: excludeIds,
     );
     _inFlight[key] = fut;
     return fut.whenComplete(() => _inFlight.remove(key));
@@ -147,6 +171,7 @@ class PlaybackResolver {
     required Quality quality,
     Map<Object?, Object?>? raw,
     void Function(String sourceLabel)? onToggle,
+    Set<String> excludeIds = const {},
   }) async {
     final tried = <String>[];
     final total = Stopwatch()..start();
@@ -188,7 +213,8 @@ class PlaybackResolver {
     AppLog.w('Resolve', '本源取链失败，用时 ${total.elapsedMilliseconds}ms，进入换源');
 
     // —— 2. 换源：按歌名+歌手在其余源里搜索 ——
-    final candidates = await _findOtherSources(title, artist, exclude: {sourceId});
+    final candidates = await _findOtherSources(title, artist,
+        exclude: {sourceId, ...excludeIds});
     for (final c in candidates) {
       if (tried.contains(_label(c.sourceId))) continue;
       tried.add(_label(c.sourceId));
@@ -251,6 +277,7 @@ class PlaybackResolver {
     final candidates = <LxSource>[];
     if (isBuiltin) {
       for (final lx in _registry.enabledRuntimes) {
+        if (_isDead(lx.id)) continue;
         try {
           await lx.waitInited();
           if (lx.supportsPlatform(sourceId)) candidates.add(lx);

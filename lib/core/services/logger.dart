@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-
 import 'app_paths.dart';
 
 enum LogLevel { debug, info, warn, error }
@@ -50,6 +49,21 @@ class AppLog {
 
   /// 当前日志文件路径（供「导出日志」用）。
   static String? get filePath => _filePath;
+
+  /// 错误漏斗：框架错误 + 未捕获异常全部进日志。
+  /// 在 init() 后调用一次。此后任何崩溃（含 build 断言、异步异常）
+  /// 都会出现在 app.log，无需用户转述。
+  static void installErrorHooks() {
+    FlutterError.onError = (details) {
+      e('FlutterError', details.exceptionAsString(), details.stack);
+      // 保留默认的红屏/控制台行为
+      FlutterError.presentError(details);
+    };
+    PlatformDispatcher.instance.onError = (error, stack) {
+      e('Uncaught', error.toString(), stack);
+      return true; // 已记录，避免进程级崩溃弹窗
+    };
+  }
 
   static void d(String tag, String msg) => _log(LogLevel.debug, tag, msg);
   static void i(String tag, String msg) => _log(LogLevel.info, tag, msg);

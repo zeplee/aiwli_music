@@ -201,6 +201,7 @@ if (typeof console !== 'undefined') {
     Object? cryptoFn(dynamic args) => _crypto(_asMap(args));
     rt.setupBridge('LxBuffer', bufFn);
     rt.setupBridge('LxCrypto', cryptoFn);
+    rt.setupBridge('LxBigInt', (args) => _bigInt(_asMap(args)));
     rt.setupBridge('LxResult', _onResult);
   }
 
@@ -295,6 +296,47 @@ if (typeof console !== 'undefined') {
         return List<int>.generate(n, (i) => (i * 37 + 11) % 256);
       case 'stub':
         return 'STUB';
+    }
+    return null;
+  }
+
+  /// MusicFree 插件 big-integer 垫片的后端：Dart 原生 BigInt。
+  /// Android 打包的 QuickJS 未启用 BigInt，JS 侧无法自算，逐次过桥。
+  Object? _bigInt(Map<dynamic, dynamic> m) {
+    final op = '${m['op'] ?? ''}';
+    final radix = (m['aradix'] as num?)?.toInt() ?? 10;
+    final aS = '${m['a'] ?? ''}';
+    final bS = '${m['b'] ?? ''}';
+    final cS = '${m['c'] ?? ''}';
+    BigInt pa() => BigInt.parse(aS.isEmpty ? '0' : aS, radix: radix);
+    BigInt pb() => BigInt.parse(bS.isEmpty ? '0' : bS, radix: radix);
+    try {
+      switch (op) {
+        case 'add':
+          return (pa() + pb()).toRadixString(radix);
+        case 'minus':
+          return (pa() - pb()).toRadixString(radix);
+        case 'multiply':
+          return (pa() * pb()).toRadixString(radix);
+        case 'divide':
+          return (pa() ~/ pb()).toRadixString(radix);
+        case 'mod':
+          // big-integer 语义：余数符号跟随被除数（Dart remainder 同）
+          return pa().remainder(pb()).toRadixString(radix);
+        case 'modPow':
+          final c = BigInt.parse(cS.isEmpty ? '1' : cS, radix: radix);
+          return pa().modPow(pb(), c).toRadixString(radix);
+        case 'cmp':
+          final x = pa();
+          final y = pb();
+          return x < y ? '-1' : x > y ? '1' : '0';
+        case 'convert':
+          final toR = (m['c'] as num?)?.toInt() ?? 10;
+          return BigInt.parse(aS.isEmpty ? '0' : aS, radix: radix)
+              .toRadixString(toR);
+      }
+    } catch (e) {
+      AppLog.w('LxBigInt', 'op=$op a=$aS b=$bS err=$e');
     }
     return null;
   }

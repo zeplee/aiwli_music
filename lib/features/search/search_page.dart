@@ -25,7 +25,7 @@ class SearchPage extends ConsumerStatefulWidget {
 }
 
 class _SearchPageState extends ConsumerState<SearchPage>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   final _controller = TextEditingController();
   List<SourceGroup> _groups = const [];
   bool _loading = false;
@@ -326,6 +326,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
           child: TextField(
+            key: const ValueKey('search_field'),
             controller: _controller,
             textInputAction: TextInputAction.search,
             onSubmitted: (_) => unawaited(_search()),
@@ -333,6 +334,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
               hintText: '搜索歌曲 / 歌手（五平台同时搜）',
               prefixIcon: const Icon(Icons.search),
               suffixIcon: IconButton(
+                  key: const ValueKey('search_submit'),
                   onPressed: () => unawaited(_search()),
                   icon: const Icon(Icons.arrow_forward)),
               border:
@@ -404,6 +406,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
         return _songTile(
           m,
           scheme,
+          tileKey: i == 0 ? const ValueKey('song_all_0') : null,
           sourceLabel: g.label,
           onTap: () => _playAll(songs, songs.indexOf(m)),
         );
@@ -430,6 +433,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
         return _songTile(
           g.songs[i],
           scheme,
+          tileKey: i == 0 ? ValueKey('song_${g.sourceId}_0') : null,
           onTap: () => _playAll(g.songs, i),
         );
       },
@@ -555,10 +559,12 @@ class _SearchPageState extends ConsumerState<SearchPage>
     MusicInfo m,
     ColorScheme scheme, {
     String? sourceLabel,
+    Key? tileKey,
     required VoidCallback onTap,
   }) {
     final q = m.qualities.map((e) => e.label).join(' / ').trim();
     return ListTile(
+      key: tileKey,
       dense: true,
       leading: const Icon(Icons.music_note, size: 20),
       title: Row(children: [

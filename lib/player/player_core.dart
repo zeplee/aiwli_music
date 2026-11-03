@@ -46,7 +46,8 @@ class PlayerCore {
   PlayerCore({
     required AudioEngine engine,
     AudioFocusPolicy? focus,
-    Future<String> Function(PlayerItem item)? urlResolver,
+    Future<String> Function(PlayerItem item, Set<String> excludeSources)?
+        urlResolver,
     Future<void> Function(PlayerItem item)? prefetcher,
   }) : _engine = engine,
         // ignore: prefer_initializing_formals
@@ -61,7 +62,8 @@ class PlayerCore {
 
   final AudioEngine _engine;
   final AudioFocusPolicy? _focus;
-  final Future<String> Function(PlayerItem item)? _urlResolver;
+  final Future<String> Function(PlayerItem item, Set<String> excludeSources)?
+      _urlResolver;
   final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
@@ -154,13 +156,31 @@ class PlayerCore {
     );
     try {
       var url = item.resolvedUrl;
-      if (url == null || url.isEmpty) {
-        final resolver = _urlResolver;
-        if (resolver == null) throw Exception('无可用播放地址');
-        url = await resolver(item);
+      final failedSources = <String>{}; // 本轮已试且打不开的源
+      const maxRounds = 3;
+
+      for (var round = 0; round < maxRounds; round++) {
+        if (url == null || url.isEmpty) {
+          final resolver = _urlResolver;
+          if (resolver == null) throw Exception('无可用播放地址');
+          // round > 0：排除已打不开的源，强制走换源
+          url = await resolver(item, failedSources);
+        }
+        if (gen != _loadGeneration) return;
+        try {
+          await _engine.load(Uri.parse(url));
+          break; // 打开成功，跳出重试环
+        } catch (loadErr) {
+          // URL 拿到了但打不开（死链/域名失效/5xx）：标记该源，换源重试
+          if (item.sourceId != 'local' && item.sourceId != 'url') {
+            failedSources.add(item.sourceId);
+          }
+          if (round == maxRounds - 1) rethrow;
+          state.value = state.value
+              .copyWith(processing: EngineProcessing.loading, error: null);
+          url = null; // 强制下轮重新 resolve（带排除集）
+        }
       }
-      if (gen != _loadGeneration) return;
-      await _engine.load(Uri.parse(url));
       if (gen != _loadGeneration) return; // 已被更新的一次切歌覆盖
       await _engine.play();
       _expectCompletion = true;
