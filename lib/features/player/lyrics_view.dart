@@ -115,14 +115,13 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
             ),
           );
         }
-        return _KaraokeLine(
-          line: line,
-          wordIndex: wordIdx,
-          style: Theme.of(context)
-              .textTheme
-              .headlineSmall
-              ?.copyWith(fontWeight: FontWeight.bold),
-          unsungColor: scheme.onSurface,
+        // 非紧凑模式（播放页歌词 Tab）：完整滚动列表，当前行居中高亮
+        return _FullLyricsList(
+          doc: doc,
+          parser: parser,
+          position: s.position,
+          translation: lyric.current.translation,
+          roman: lyric.current.roman,
         );
       },
     );
@@ -353,5 +352,113 @@ class _FullLyricsSheetState extends State<_FullLyricsSheet> {
         },
       );
     });
+  }
+}
+
+/// 歌词 Tab 的完整滚动列表：当前行逐字高亮 + 自动居中滚动，
+/// 可选叠加翻译 / 罗马音（网易源提供）。
+class _FullLyricsList extends StatefulWidget {
+  const _FullLyricsList({
+    required this.doc,
+    required this.parser,
+    required this.position,
+    this.translation,
+    this.roman,
+  });
+  final LyricDocument doc;
+  final LrcParser parser;
+  final Duration position;
+  final LyricDocument? translation;
+  final LyricDocument? roman;
+
+  @override
+  State<_FullLyricsList> createState() => _FullLyricsListState();
+}
+
+class _FullLyricsListState extends State<_FullLyricsList> {
+  final _controller = ScrollController();
+  static const _itemHeight = 56.0;
+  int _lastIndex = -1;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// 按时间戳从译文/罗马音文档取对应行（±200ms 视为同一行）。
+  String? _auxText(LyricDocument? aux, int index) {
+    if (aux == null || aux.lines.isEmpty) return null;
+    final t = widget.doc.lines[index].start;
+    for (final a in aux.lines) {
+      if ((a.start - t).inMilliseconds.abs() <= 200) return a.text;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final idx = widget.parser.currentIndex(widget.doc, widget.position);
+    if (idx >= 0 && idx != _lastIndex) {
+      _lastIndex = idx;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_controller.hasClients) {
+          final target =
+              (idx - 3).clamp(0, widget.doc.lines.length - 1) * _itemHeight;
+          _controller.animateTo(target,
+              duration: const Duration(milliseconds: 320),
+              curve: Curves.easeOut);
+        }
+      });
+    }
+
+    return ListView.builder(
+      controller: _controller,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+      itemExtent: _itemHeight,
+      itemCount: widget.doc.lines.length,
+      itemBuilder: (context, i) {
+        final active = i == idx;
+        final tr = _auxText(widget.translation, i);
+        final ro = _auxText(widget.roman, i);
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              active
+                  ? _KaraokeLine(
+                      line: widget.doc.lines[i],
+                      wordIndex: widget.parser.currentWordIndex(
+                          widget.doc.lines[i], widget.position),
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.bold),
+                      unsungColor: scheme.onSurface,
+                    )
+                  : Text(widget.doc.lines[i].text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: scheme.onSurfaceVariant, fontSize: 14)),
+              if (i == idx && (tr != null || ro != null))
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    [?tr, ?ro].join('  ·  '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style:
+                        TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }

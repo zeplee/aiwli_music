@@ -273,7 +273,8 @@ class CommentService extends SafeNotifier {
   CommentState current = const CommentState();
   String? _key;
 
-  Future<void> fetchFor(String sourceId, String musicId) async {
+  Future<void> fetchFor(String sourceId, String musicId,
+      {String title = '', String artist = ''}) async {
     final key = '$sourceId/$musicId';
     if (key == _key && current.items.isNotEmpty) return;
     _key = key;
@@ -286,7 +287,8 @@ class CommentService extends SafeNotifier {
     current = const CommentState(loading: true);
     notifyListeners();
     try {
-      final list = await CommentSdk.fetch(sourceId: sourceId, musicId: musicId);
+      final list = await CommentSdk.fetch(
+          sourceId: sourceId, musicId: musicId, title: title, artist: artist);
       if (_key != key) return;
       _cache[key] = list;
       current = CommentState(

@@ -476,9 +476,9 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
         _key = k;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            ref
-                .read(commentServiceProvider)
-                .fetchFor(item.sourceId, item.musicId);
+            ref.read(commentServiceProvider).fetchFor(
+                  item.sourceId, item.musicId,
+                  title: item.title, artist: item.artist);
           }
         });
       }
