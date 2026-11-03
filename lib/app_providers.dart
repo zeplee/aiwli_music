@@ -64,8 +64,14 @@ Future<String> resolveUrl(Ref ref, PlayerItem item) async {
 
 /// 全局唯一的取链器：URL 缓存 + 「平台→成功源」记忆都在它身上，
 /// 必须是单例，否则每次访问都要重新建，缓存形同虚设。
+PlaybackResolver? _resolverSingleton;
+
 final playbackResolverProvider = Provider<PlaybackResolver>((ref) {
-  return PlaybackResolver(ref.watch(sourceRegistryProvider));
+  // 注意：不能 watch(sourceRegistryProvider)——registry 每次 notifyListeners
+  // 都会把本 provider 重建，URL 缓存与成功源记忆随之清零（现场日志证实：
+  // 同一首歌 27 秒后缓存未命中）。registry 实例本身不重建，直接持有。
+  return _resolverSingleton ??=
+      PlaybackResolver(ref.read(sourceRegistryProvider));
 });
 
 /// 进程级 PlayerCore 单例。

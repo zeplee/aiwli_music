@@ -73,6 +73,11 @@ class PlaybackResolver {
   /// 记住「哪个源成功取到过链接」，下次同平台优先用它（内存级，会话内有效）。
   final Map<String, String> _preferred = {};
 
+  /// 在途请求去重：同一首歌并发触发（点播+预取+自动下一首）时，
+  /// 后到者复用同一个 Future，避免同时压到同一个 LxRuntime 串行队列
+  /// 造成 dispatch 超时连锁重建。
+  final Map<String, Future<ResolvedPlayback>> _inFlight = {};
+
   /// 播放地址缓存：key = sourceId|musicId，value = (url, 过期时间)。
   ///
   /// 对齐 lx-music 的 `music_url` 表（取链前先查缓存，命中直接返回不发请求）。
@@ -107,6 +112,34 @@ class PlaybackResolver {
 
   /// 解析播放地址。失败抛 [PlaybackResolveException]。
   Future<ResolvedPlayback> resolve({
+    required String title,
+    required String artist,
+    required String sourceId,
+    required String musicId,
+    required Quality quality,
+    Map<Object?, Object?>? raw,
+    void Function(String sourceLabel)? onToggle,
+  }) {
+    final key = _cacheKey(sourceId, musicId);
+    final inflight = _inFlight[key];
+    if (inflight != null) {
+      AppLog.i('Resolve', '在途复用 $key');
+      return inflight;
+    }
+    final fut = _resolveInner(
+      title: title,
+      artist: artist,
+      sourceId: sourceId,
+      musicId: musicId,
+      quality: quality,
+      raw: raw,
+      onToggle: onToggle,
+    );
+    _inFlight[key] = fut;
+    return fut.whenComplete(() => _inFlight.remove(key));
+  }
+
+  Future<ResolvedPlayback> _resolveInner({
     required String title,
     required String artist,
     required String sourceId,
