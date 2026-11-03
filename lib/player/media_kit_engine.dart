@@ -33,6 +33,11 @@ class MediaKitEngine implements AudioEngine {
   final Player _player;
   final List<StreamSubscription<dynamic>> _subs = [];
 
+  /// 最后请求加载的媒体（load() 同步赋值，早于 mpv 的任何异步事件）。
+  Uri? _source;
+  @override
+  Uri? get currentSource => _source;
+
   EngineSnapshot _snapshot = const EngineSnapshot();
   final _controller = StreamController<EngineSnapshot>.broadcast();
 
@@ -60,6 +65,7 @@ class MediaKitEngine implements AudioEngine {
   @override
   Future<Duration?> load(Uri source,
       {Map<String, String>? headers, String? formatHint}) async {
+    _source = source; // 同步赋值：旧歌的迟到异步事件靠它丢弃
     _emit(processing: EngineProcessing.loading, playing: false, position: Duration.zero);
     await _player.open(Media(source.toString(), httpHeaders: headers ?? const {}));
     _emit(processing: EngineProcessing.ready);

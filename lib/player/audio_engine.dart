@@ -19,6 +19,11 @@ abstract interface class AudioEngine {
 
   Stream<EngineSnapshot> get snapshots;
   EngineSnapshot get current;
+
+  /// 当前（最后请求）加载的媒体地址。mpv 的错误/完成事件是【异步】的，
+  /// 快速切歌时旧歌的迟到事件会在新歌 load 之后到达——
+  /// 上层用 currentSource 比对，丢弃不属于当前曲目的陈旧事件。
+  Uri? get currentSource;
 }
 
 /// M0/测试用空引擎：所有调用即记即忘，不发声。
@@ -41,4 +46,6 @@ class StubEngine implements AudioEngine {
   Stream<EngineSnapshot> get snapshots => const Stream.empty();
   @override
   EngineSnapshot get current => const EngineSnapshot();
+  @override
+  Uri? get currentSource => null;
 }

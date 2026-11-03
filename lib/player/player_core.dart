@@ -125,6 +125,16 @@ class PlayerCore {
   int get currentIndex => _index;
 
   void _onEngineSnapshot(EngineSnapshot snap) {
+    // 陈旧事件守卫：快速切歌时，旧歌的 mpv 异步错误/完成事件会在
+    // 新歌 load 之后到达。音频已属于新歌，把这些事件直接丢弃，
+    // 否则页面显示（错误文案/进度条/自动下一首）被旧歌污染——
+    // 即"播放的音频和显示的页面不是同一首"。
+    final cur = _engine.currentSource;
+    if (cur != null &&
+        _activeResolved != null &&
+        cur != Uri.parse(_activeResolved!.url)) {
+      return;
+    }
     // 引擎异步错误（mpv "Failed to open <死链>"）→ 换源回退。
     // load() 本身不抛这类错，只能在 error 流里接。
     if (snap.processing == EngineProcessing.error &&
