@@ -175,13 +175,34 @@ class PlayerPage extends ConsumerWidget {
                             : scheme.onSurfaceVariant),
                   ),
                 ]),
+                // 取链/加载中提示：切歌后可能等待数秒，必须让用户看到进度
+                if (s.processing == EngineProcessing.loading ||
+                    s.processing == EngineProcessing.buffering)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: scheme.primary),
+                        ),
+                        const SizedBox(width: 8),
+                        Text('正在获取播放地址…',
+                            style: TextStyle(
+                                color: scheme.primary, fontSize: 12)),
+                      ],
+                    ),
+                  ),
                 if (s.error != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text('${s.error}',
                         style: TextStyle(color: scheme.error, fontSize: 12),
                         textAlign: TextAlign.center,
-                        maxLines: 2),
+                        maxLines: 3),
                   ),
                 const SizedBox(height: 12),
               ]),

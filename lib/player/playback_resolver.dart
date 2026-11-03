@@ -61,11 +61,19 @@ class PlaybackResolver {
     'mg': '咪咕',
   };
 
-  /// 换源搜索超时（对齐 lx 的 15s）。
-  static const _searchTimeout = Duration(seconds: 15);
+  /// 换源搜索超时。参考实现用 15s，但那是桌面端且只搜内置 5 平台；
+  /// 我们源更多、QuickJS 更慢，缩到 8s 避免用户长时间无反馈。
+  static const _searchTimeout = Duration(seconds: 8);
 
-  /// 单个源取链超时。
-  static const _urlTimeout = Duration(seconds: 20);
+  /// 单个源取链超时。真实可用脚本通常 1-3s 内返回；20s 会让串行尝试
+  /// 拖到一分钟以上，这里收到 6s。
+  static const _urlTimeout = Duration(seconds: 6);
+
+  /// 记住「哪个源成功取到过链接」，下次同平台优先用它（内存级，会话内有效）。
+  final Map<String, String> _preferred = {};
+
+  /// 平台/源 → 上次成功的源 id。
+  String? _preferredFor(String sourceId) => _preferred[sourceId];
 
   /// 解析播放地址。失败抛 [PlaybackResolveException]。
   Future<ResolvedPlayback> resolve({
@@ -160,37 +168,79 @@ class PlaybackResolver {
     }
     if (candidates.isEmpty) return null;
 
-    for (final lx in candidates) {
-      try {
-        await lx.waitInited();
-        final url = await lx
-            .getMusicUrl(
-              MusicInfo(
-                sourceId: sourceId,
-                musicId: musicId,
-                title: title,
-                artist: artist,
-                raw: raw,
-              ),
-              quality,
-              // 内置平台：把平台名告诉脚本；脚本源自身则用其 id
-              platform: isBuiltin ? sourceId : null,
-            )
-            .timeout(_urlTimeout);
-        if (url.isEmpty) continue;
-        return ResolvedPlayback(
-          url: url,
+    // 优先用上次成功的源；否则并发尝试所有候选，谁先成功用谁。
+    final preferredId = _preferredFor(sourceId);
+    final ordered = [
+      if (preferredId != null)
+        ...candidates.where((c) => c.id == preferredId),
+      ...candidates.where((c) => c.id != preferredId),
+    ];
+
+    final winner = await _firstSuccess(ordered, (
+      {required lx, required platform}) async {
+      await lx.waitInited();
+      return lx.getMusicUrl(
+        MusicInfo(
           sourceId: sourceId,
-          sourceLabel: _label(sourceId),
           musicId: musicId,
           title: title,
           artist: artist,
-        );
-      } catch (e) {
-        AppLog.w('PlaybackResolver', '${lx.name} 取 $sourceId 失败: $e');
-      }
+          raw: raw,
+        ),
+        quality,
+        platform: platform,
+      );
+    }, platform: isBuiltin ? sourceId : null);
+
+    if (winner == null) return null;
+    _preferred[sourceId] = winner.$1;
+    return ResolvedPlayback(
+      url: winner.$2,
+      sourceId: sourceId,
+      sourceLabel: _label(sourceId),
+      musicId: musicId,
+      title: title,
+      artist: artist,
+    );
+  }
+
+  /// 并发尝试多个源，返回第一个成功的结果（源 id + url）。
+  /// 全部失败/超时返回 null。用 true 并发避免串行等待逐个超时。
+  Future<(String, String)?> _firstSuccess(
+    List<LxSource> candidates,
+    Future<String> Function(
+            {required LxSource lx, required String? platform})
+        attempt, {
+    required String? platform,
+  }) async {
+    if (candidates.isEmpty) return null;
+
+    final completer = Completer<(String, String)?>();
+    var pending = candidates.length;
+
+    void finish((String, String)? r) {
+      if (completer.isCompleted) return;
+      completer.complete(r);
     }
-    return null;
+
+    for (final lx in candidates) {
+      unawaited(() async {
+        try {
+          final url = await attempt(lx: lx, platform: platform)
+              .timeout(_urlTimeout);
+          if (url.isNotEmpty) finish((lx.id, url));
+        } catch (e) {
+          AppLog.w('PlaybackResolver', '${lx.name} 取链失败: $e');
+        } finally {
+          pending--;
+          if (pending == 0) finish(null);
+        }
+      }());
+    }
+    return completer.future.timeout(
+      _urlTimeout + const Duration(seconds: 2),
+      onTimeout: () => null,
+    );
   }
 
   /// 用歌名+歌手在所有「能搜索」的源里找同一首歌的另一个版本。
