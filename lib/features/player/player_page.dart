@@ -5,6 +5,7 @@ import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../player/models.dart';
 import 'lyrics_view.dart';
+import '../../player/player_core.dart';
 import 'player_extras.dart';
 
 class PlayerPage extends ConsumerWidget {
@@ -89,30 +90,6 @@ class PlayerPage extends ConsumerWidget {
                   ),
                 ]),
                 const Spacer(flex: 2),
-                // 封面/歌词入口：点按进全屏歌词页（播放页的核心二级页）
-                InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: () => _openFullLyrics(context, ref),
-                  child: Container(
-                    width: double.infinity,
-                    height: 180,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          scheme.primary,
-                          const Color(0xFF8B5CF6),
-                          scheme.tertiary,
-                        ],
-                      ),
-                    ),
-                    child: Icon(Icons.lyrics,
-                        size: 60, color: Colors.white.withValues(alpha: 0.85)),
-                  ),
-                ),
-                const Spacer(),
                 Text(s.title.isEmpty ? '未在播放' : s.title,
                     style: Theme.of(context).textTheme.titleLarge,
                     textAlign: TextAlign.center,
@@ -124,8 +101,9 @@ class PlayerPage extends ConsumerWidget {
                         color: scheme.onSurfaceVariant),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 8),
-                // 逐字歌词面板（点击展开全屏歌词）
-                SizedBox(height: 84, child: LyricsPanel(compact: true)),
+                // 上半区三 Tab：封面 / 歌词 / 评论（点行切换，底部操作区不动）
+                _PlayerTabs(item: item),
+                const SizedBox(height: 12),
                 _SeekBar(
                   position: pos,
                   duration: duration,
@@ -218,17 +196,6 @@ class PlayerPage extends ConsumerWidget {
     );
   }
 
-  void _openFullLyrics(BuildContext context, WidgetRef ref) {
-    final core = ref.read(playerCoreProvider);
-    final item = core.current;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => FullLyricsPage(
-          title: item?.title ?? '', artist: item?.artist ?? ''),
-    );
-  }
 
   static String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -291,5 +258,110 @@ class _SeekBarState extends State<_SeekBar> {
         _dragValue = null;
       },
     );
+  }
+}
+
+/// 播放页上半区三 Tab：封面（大卡）/ 歌词（卡拉OK滚动）/ 评论（热评）。
+/// 本地/无对应能力时各 Tab 显示优雅空态；任何状态下可点切换。
+class _PlayerTabs extends ConsumerStatefulWidget {
+  const _PlayerTabs({required this.item});
+  final PlayerItem? item;
+
+  @override
+  ConsumerState<_PlayerTabs> createState() => _PlayerTabsState();
+}
+
+class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
+  int _index = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: 320,
+      child: Column(children: [
+        // Tab 行
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _tab('封面', 0, Icons.album, scheme),
+            const SizedBox(width: 20),
+            _tab('歌词', 1, Icons.lyrics, scheme),
+            const SizedBox(width: 20),
+            _tab('评论', 2, Icons.chat_bubble_outline, scheme),
+          ]),
+        ),
+        Expanded(child: _page(scheme)),
+      ]),
+    );
+  }
+
+  Widget _tab(String label, int i, IconData icon, ColorScheme scheme) {
+    final active = _index == i;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => setState(() => _index = i),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 16,
+              color: active ? scheme.primary : scheme.onSurfaceVariant),
+          const SizedBox(width: 4),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                  color: active ? scheme.primary : scheme.onSurfaceVariant)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _page(ColorScheme scheme) {
+    final item = widget.item;
+    switch (_index) {
+      case 1:
+        return const ClipRRect(
+            borderRadius: BorderRadius.all(Radius.circular(20)),
+            child: LyricsPanel(compact: false));
+      case 2:
+        return ClipRRect(
+          borderRadius: const BorderRadius.all(Radius.circular(20)),
+          child: Container(
+            color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+            child: Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.chat_bubble_outline,
+                    size: 36, color: scheme.onSurfaceVariant),
+                const SizedBox(height: 8),
+                const Text('当前音源暂不支持评论',
+                    style: TextStyle(fontSize: 13)),
+              ]),
+            ),
+          ),
+        );
+      default:
+        return InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: item == null ? null : () {},
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  scheme.primary,
+                  const Color(0xFF8B5CF6),
+                  scheme.tertiary,
+                ],
+              ),
+            ),
+            child: Icon(Icons.graphic_eq,
+                size: 60, color: Colors.white.withValues(alpha: 0.85)),
+          ),
+        );
+    }
   }
 }
