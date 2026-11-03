@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../core/models/music.dart';
 import '../core/models/quality.dart';
+import '../core/models/quality_rank.dart';
 import '../core/services/logger.dart';
 import '../sources/lx/lx_source.dart';
 import '../sources/registry.dart';
@@ -214,12 +215,55 @@ class PlaybackResolver {
     }
     if (candidates.isEmpty) return null;
 
+    // 按音质降级链尝试：请求音质不被源支持时不硬失败，而是沿链上移
+    // （对齐参考实现 musicSourceQualityFallbacks，避免"请求无损→源不支持
+    //  →硬等超时→换源"的无效等待）。
+    final qualityChain = qualityFallbacks(
+      requested: quality,
+      sourceQualities: candidates.expand((c) => c.declaredQualities).toSet(),
+    );
+
+    for (final q in qualityChain) {
+      final got = await _tryWithQuality(
+        candidates: candidates,
+        sourceId: sourceId,
+        musicId: musicId,
+        title: title,
+        artist: artist,
+        quality: q,
+        raw: raw,
+        isBuiltin: isBuiltin,
+      );
+      if (got != null) return got;
+    }
+    return null;
+  }
+
+  /// 用指定音质并发尝试候选源。
+  Future<ResolvedPlayback?> _tryWithQuality({
+    required List<LxSource> candidates,
+    required String sourceId,
+    required String musicId,
+    required String title,
+    required String artist,
+    required Quality quality,
+    required Map<Object?, Object?>? raw,
+    required bool isBuiltin,
+  }) async {
+    // 能力预筛选：声明了平台但没声明该音质的源直接跳过，不浪费一次请求
+    final capable = <LxSource>[];
+    for (final lx in candidates) {
+      final qs = lx.declaredQualities;
+      if (qs.isEmpty || qs.contains(quality)) capable.add(lx);
+    }
+    if (capable.isEmpty) return null;
+
     // 优先用上次成功的源；否则并发尝试所有候选，谁先成功用谁。
     final preferredId = _preferredFor(sourceId);
     final ordered = [
       if (preferredId != null)
-        ...candidates.where((c) => c.id == preferredId),
-      ...candidates.where((c) => c.id != preferredId),
+        ...capable.where((c) => c.id == preferredId),
+      ...capable.where((c) => c.id != preferredId),
     ];
 
     final winner = await _firstSuccess(ordered, (

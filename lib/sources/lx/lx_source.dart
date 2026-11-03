@@ -1,6 +1,7 @@
 
 import '../../core/models/music.dart';
 import '../../core/models/quality.dart';
+import '../../core/models/quality_rank.dart';
 import '../runtime/runtime_host.dart';
 
 /// lx 音源：全部能力由用户导入的脚本提供（musicUrl / lyric / pic / musicSearch /
@@ -45,8 +46,36 @@ class LxSource {
     // 记录脚本声明的平台标识（kw/tx/wy/kg/mg…），用于「内置平台曲目
     // 借用脚本取链」时判断该脚本能否处理某平台。
     _platforms = {for (final k in sources.keys) k.toString()};
+    // 解析每个平台声明的音质（lx 脚本规范里 sources[platform] 可带
+    // 平台级 qualitys；MusicFree 插件没有这个概念，走空集合＝不限制）。
+    _qualitiesByPlatform = {};
+    for (final e in sources.entries) {
+      final m = (e.value as Map?)?.cast<Object?, Object?>();
+      final raw = m?['qualitys'] ?? m?['qualities'];
+      final set = <Quality>{};
+      if (raw is List) {
+        for (final q in raw) {
+          final parsed = q is Map
+              ? QualityCode.fromCode('${q['type'] ?? ''}')
+              : QualityCode.fromCode('$q');
+          if (parsed != null) set.add(parsed);
+        }
+      }
+      if (set.isNotEmpty) _qualitiesByPlatform[e.key.toString()] = set;
+    }
     _inited = true;
     return true;
+  }
+
+  /// 平台 → 该平台支持的音质（脚本未声明时为空，表示不限制）。
+  Map<String, Set<Quality>> _qualitiesByPlatform = {};
+
+  /// 本源所有平台支持音质的并集；空集合表示脚本未声明（不做筛选）。
+  Set<Quality> get declaredQualities {
+    if (_qualitiesByPlatform.isEmpty) return const {};
+    return {
+      for (final s in _qualitiesByPlatform.values) ...s,
+    };
   }
 
   /// 脚本 inited 时声明的平台标识集合。
