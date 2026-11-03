@@ -89,21 +89,20 @@ class PlayerPage extends ConsumerWidget {
                     ),
                   ),
                 ]),
-                const Spacer(flex: 2),
+                const SizedBox(height: 4),
+                // 标题/歌手贴顶（不再挤在 Tab 中间浪费视觉空间）
                 Text(s.title.isEmpty ? '未在播放' : s.title,
                     style: Theme.of(context).textTheme.titleLarge,
                     textAlign: TextAlign.center,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 4),
+                const SizedBox(height: 2),
                 Text(s.artist,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 8),
-                // 上半区三 Tab：封面 / 歌词 / 评论（点行切换，底部操作区不动）
-                _PlayerTabs(item: item),
-                const SizedBox(height: 12),
+                // 上半区三页：封面 / 歌词 / 评论（左右滑动，撑满剩余空间）
+                Expanded(child: _PlayerTabs(item: item)),
                 _SeekBar(
                   position: pos,
                   duration: duration,
@@ -284,8 +283,7 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return SizedBox(
-      height: 320,
+    return SizedBox.expand(
       child: Column(children: [
         Expanded(
           child: PageView(
