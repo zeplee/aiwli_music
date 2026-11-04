@@ -498,17 +498,13 @@ Future<void> migrateLegacyFavorites(PlaylistService playlists,
     AppLog.i('Migrate', '已删除陈旧歌单「我的收藏（旧）」(${stale.entries.length} 首，内容与系统收藏重复)');
   }
 
-  // 3) 文件夹识别：把「试听列表 / XX人名」这类歌单归到文件夹。
-  //    lx 导入时人名歌单往往就是"某个人的曲库"，
-  //    这里把名字与其下的歌单归到同名文件夹需要显式设置，
-  //    所以只做一件事：把 lx 的「试听列表」归入「lx 导入」文件夹，
-  //    避免它混在用户自己的歌单里。
-  final lxTrial = playlists.playlists
-      .where((p) => p.name == '试听列表' && p.folder == null)
-      .toList();
-  for (final t in lxTrial) {
-    playlists.setFolder(t.id, 'lx 导入');
-    AppLog.i('Migrate', '「试听列表」已归入文件夹「lx 导入」');
+  // 3) 「试听列表」保持顶层，不建额外文件夹（用户明确不要「lx 导入」分组）。
+  //    只把它从任何已有文件夹里移出来，恢复成普通歌单。
+  for (final t in playlists.playlists
+      .where((p) => p.name == '试听列表' && p.folder != null)
+      .toList()) {
+    playlists.setFolder(t.id, null);
+    AppLog.i('Migrate', '「试听列表」已移回顶层歌单');
   }
   // 标记已迁移（保留原文件内容便于回滚，但不再读取）
   await store.flush('favorites.json.migrated', {'at': DateTime.now().toIso8601String()});
