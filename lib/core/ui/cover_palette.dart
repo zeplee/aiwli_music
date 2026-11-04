@@ -25,7 +25,9 @@ class CoverPalette {
 
   static Future<ui.Image> _loadImage(String url) {
     final completer = Completer<ui.Image>();
-    final stream = NetworkImage(url).resolve(const ImageConfiguration());
+    // 限尺寸解码：取色只需要小图，别为了一张 3000px 封面解码几十 MB。
+    final provider = ResizeImage(NetworkImage(url), width: 64, height: 64);
+    final stream = provider.resolve(const ImageConfiguration());
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
       (info, _) {
@@ -44,47 +46,64 @@ class CoverPalette {
   static Future<Color?> _dominantColor(ui.Image image) async {
     final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
     if (data == null) return null;
-    final bytes = data.buffer.asUint8List();
+    final bytes = data.buffer.asUint8List(
+      data.offsetInBytes,
+      data.lengthInBytes,
+    );
     final w = image.width;
     final h = image.height;
     if (w == 0 || h == 0) return null;
 
-    var bestScore = -1.0;
-    var best = const Color(0xFF6750A4);
+    // 5x5 网格取样：比随机采样稳定，不同封面不会因采样点抖动而跳色。
+    // alpha 加权：半透明像素（部分 PNG 封面）不应和实心像素同权。
+    var r = 0, g = 0, b = 0;
+    for (var row = 0; row < 5; row++) {
+      final y = ((row + 0.5) * h / 5).floor().clamp(0, h - 1);
+      for (var col = 0; col < 5; col++) {
+        final x = ((col + 0.5) * w / 5).floor().clamp(0, w - 1);
+        final i = (y * w + x) * 4;
+        if (i + 3 >= bytes.length) continue;
+        final a = bytes[i + 3];
+        r += bytes[i] * a ~/ 255;
+        g += bytes[i + 1] * a ~/ 255;
+        b += bytes[i + 2] * a ~/ 255;
+      }
+    }
+    // 均值色做基底
+    var base = Color.fromARGB(255, r ~/ 25, g ~/ 25, b ~/ 25);
 
-    final stepX = (w / 24).ceil().clamp(1, w);
-    final stepY = (h / 24).ceil().clamp(1, h);
-
+    // 均值常常偏灰（封面上蓝天下草地混在一起）。再挑一个高饱和像素做校正，
+    // 让动态主题有明显色相，而不是一片灰。
+    var bestSat = 0.0;
+    Color? vivid;
+    final stepX = (w / 16).ceil().clamp(1, w);
+    final stepY = (h / 16).ceil().clamp(1, h);
     for (var y = 0; y < h; y += stepY) {
       for (var x = 0; x < w; x += stepX) {
         final i = (y * w + x) * 4;
         if (i + 3 >= bytes.length) continue;
-        if (bytes[i + 3] < 128) continue; // 跳过透明像素
-
-        final r = bytes[i] / 255.0;
-        final g = bytes[i + 1] / 255.0;
-        final b = bytes[i + 2] / 255.0;
-
-        final maxV = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        final minV = r < g ? (r < b ? r : b) : (g < b ? g : b);
+        if (bytes[i + 3] < 160) continue; // 只看较实的像素
+        final rr = bytes[i] / 255.0;
+        final gg = bytes[i + 1] / 255.0;
+        final bb = bytes[i + 2] / 255.0;
+        final maxV = rr > gg ? (rr > bb ? rr : bb) : (gg > bb ? gg : bb);
+        final minV = rr < gg ? (rr < bb ? rr : bb) : (gg < bb ? gg : bb);
         final lightness = (maxV + minV) / 2;
+        if (lightness < 0.15 || lightness > 0.88) continue; // 近黑/近白跳过
         final denom = 1 - (2 * lightness - 1).abs();
-        final sat = maxV == minV || denom == 0 ? 0.0 : (maxV - minV) / denom;
-
-        // 太暗/过亮的颜色当主题不好看，按偏离中亮度降权
-        final lightBonus = 1 - (lightness - 0.5).abs() * 2;
-        final score = sat * 0.7 + lightBonus * 0.3;
-        if (score > bestScore) {
-          bestScore = score;
-          best = Color.fromARGB(
-            255,
-            (r * 255).round(),
-            (g * 255).round(),
-            (b * 255).round(),
-          );
+        final sat = (maxV == minV || denom == 0) ? 0.0 : (maxV - minV) / denom;
+        if (sat > bestSat) {
+          bestSat = sat;
+          vivid = Color.fromARGB(
+              255, (rr * 255).round(), (gg * 255).round(), (bb * 255).round());
         }
       }
     }
-    return best;
+
+    // 饱和度足够就用以有辨识度的色，否则退回均值
+    if (vivid != null && bestSat > 0.28) {
+      return Color.lerp(base, vivid, 0.65) ?? vivid;
+    }
+    return base;
   }
 }

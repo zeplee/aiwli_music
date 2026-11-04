@@ -878,41 +878,65 @@ class _CoverBackdrop extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final hasArt = artUrl != null && artUrl!.isNotEmpty;
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (artUrl != null && artUrl!.isNotEmpty)
+        // 底层：主色铺底（无封面时也不留空白）
+        ColoredBox(color: Color.alphaBlend(
+            accent.withValues(alpha: 0.10), scheme.surface)),
+
+        // 封面大幅模糊（参考栖弦 ImmersiveBackground：整块封面糊成色块背景）
+        if (hasArt)
           ImageFiltered(
-            imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40, tileMode: TileMode.decal),
+            imageFilter: ImageFilter.blur(
+                sigmaX: 64, sigmaY: 64, tileMode: TileMode.decal),
             child: Image.network(
               artUrl!,
               fit: BoxFit.cover,
+              // 封面色块放大铺满，避免边缘露出黑边
+              alignment: Alignment.center,
               errorBuilder: (_, _, _) => const SizedBox.shrink(),
             ),
           ),
-        // 主色渐变遮罩：保证前景文字始终可读（WCAG 对比度）
+
+        // 主色光晕：左上浓、右下淡，让背景有方向感而不是均匀灰
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(-0.7, -0.8),
+              radius: 1.5,
+              colors: [
+                accent.withValues(alpha: 0.34),
+                Colors.transparent,
+              ],
+            ),
+          ),
+        ),
+        // 对侧补一层次色，避免单色单调
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: RadialGradient(
+              center: const Alignment(0.8, 0.9),
+              radius: 1.3,
+              colors: [
+                scheme.tertiary.withValues(alpha: 0.22),
+                Colors.transparent,
+              ],
+            ),
+          ),
+        ),
+
+        // 可读性遮罩：保证前景文字对比度（封面再花也不影响阅读）
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                scheme.surface.withValues(alpha: 0.86),
-                scheme.surface.withValues(alpha: 0.94),
+                scheme.surface.withValues(alpha: 0.74),
+                scheme.surface.withValues(alpha: 0.96),
                 scheme.surface,
-              ],
-            ),
-          ),
-        ),
-        // 顶部一层淡淡的主色光晕
-        DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                accent.withValues(alpha: 0.16),
-                Colors.transparent,
               ],
             ),
           ),

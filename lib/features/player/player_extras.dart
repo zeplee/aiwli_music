@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -302,13 +304,31 @@ class _QueueSheet extends ConsumerWidget {
         final currentIndex = core.currentIndex;
         return SafeArea(
           child: SizedBox(
-            height: MediaQuery.of(context).size.height * 0.62,
+            height: MediaQuery.of(context).size.height * 0.66,
             child: Column(children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
                 child: Row(children: [
-                  Text('播放队列 · ${queue.length} 首',
+                  Text('播放队列',
                       style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(width: 8),
+                  // 当前是第几首 / 共几首（参考栖弦显示位置）
+                  if (queue.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${currentIndex + 1}/${queue.length}',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: scheme.onPrimaryContainer),
+                      ),
+                    ),
                   const Spacer(),
                   IconButton(
                     tooltip: '清空',
@@ -326,14 +346,72 @@ class _QueueSheet extends ConsumerWidget {
               const Divider(height: 1),
               Expanded(
                 child: queue.isEmpty
-                    ? const Center(child: Text('队列为空'))
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.queue_music,
+                                size: 36, color: scheme.onSurfaceVariant),
+                            const SizedBox(height: 8),
+                            Text('队列为空',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    color: scheme.onSurfaceVariant)),
+                          ],
+                        ),
+                      )
                     : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 8),
                         itemCount: queue.length,
                         itemBuilder: (context, i) {
                           final it = queue[i];
                           final active = i == currentIndex;
+
+                          // 当前曲：独立高亮卡片 + 播放中动画条
+                          // （参考栖弦：当前曲不从列表里平铺，做成卡片强调）
+                          if (active) {
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: scheme.primaryContainer
+                                      .withValues(alpha: 0.55),
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: ListTile(
+                                  leading: _PlayingBars(
+                                      playing: s.playing,
+                                      color: scheme.primary),
+                                  title: Text(it.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: scheme.onPrimaryContainer)),
+                                  subtitle: Text(it.artist,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: scheme.onPrimaryContainer
+                                              .withValues(alpha: 0.75))),
+                                  trailing: IconButton(
+                                    tooltip: '从队列移除',
+                                    onPressed: () => core.removeAt(i),
+                                    icon: Icon(Icons.close,
+                                        size: 18,
+                                        color: scheme.onPrimaryContainer),
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
+
+                          // 其他曲：常规行，左滑删除
                           return Dismissible(
-                            key: ValueKey('queue_${it.sourceId}_${it.musicId}_$i'),
+                            key:
+                                ValueKey('queue_${it.sourceId}_${it.musicId}_$i'),
                             direction: DismissDirection.endToStart,
                             background: Container(
                               color: scheme.errorContainer,
@@ -345,25 +423,17 @@ class _QueueSheet extends ConsumerWidget {
                             onDismissed: (_) => core.removeAt(i),
                             child: ListTile(
                               dense: true,
-                              leading: Icon(
-                                active
-                                    ? Icons.graphic_eq
-                                    : Icons.music_note_outlined,
-                                color: active
-                                    ? scheme.primary
-                                    : scheme.onSurfaceVariant,
-                                size: 20,
+                              leading: SizedBox(
+                                width: 24,
+                                child: Text('${i + 1}',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        fontSize: 12,
+                                        color: scheme.onSurfaceVariant)),
                               ),
-                              title: Text(
-                                it.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: active ? scheme.primary : null,
-                                  fontWeight:
-                                      active ? FontWeight.bold : null,
-                                ),
-                              ),
+                              title: Text(it.title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis),
                               subtitle: Text(it.artist,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -378,6 +448,85 @@ class _QueueSheet extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// 播放中的跳动音条（参考栖弦 _AnimatedPlayingBars）。
+/// 暂停时静止，播放时循环起伏 —— 比静态图标更能一眼看出"正在播这首"。
+class _PlayingBars extends StatefulWidget {
+  const _PlayingBars({required this.playing, required this.color});
+  final bool playing;
+  final Color color;
+
+  @override
+  State<_PlayingBars> createState() => _PlayingBarsState();
+}
+
+class _PlayingBarsState extends State<_PlayingBars>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.playing) _c.repeat(reverse: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PlayingBars old) {
+    super.didUpdateWidget(old);
+    if (widget.playing && !_c.isAnimating) {
+      _c.repeat(reverse: true);
+    } else if (!widget.playing && _c.isAnimating) {
+      _c.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 三根柱子，相位错开，看起来像跳动的音条
+    const delays = [0.0, 0.34, 0.67];
+    return SizedBox(
+      width: 22,
+      height: 22,
+      child: AnimatedBuilder(
+        animation: _c,
+        builder: (context, _) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              for (var i = 0; i < 3; i++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 1.4),
+                  child: Container(
+                    width: 3,
+                    height: 4 +
+                        14 *
+                            (0.5 +
+                                0.5 *
+                                    math.sin(
+                                        (_c.value + delays[i]) * math.pi * 2)),
+                    decoration: BoxDecoration(
+                      color: widget.color,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

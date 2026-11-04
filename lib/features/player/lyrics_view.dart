@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -423,10 +425,68 @@ class _FullLyricsListState extends State<_FullLyricsList> {
   static const _itemHeight = 56.0;
   int _lastIndex = -1;
 
+  /// 用户手动滚动时暂停自动跟随。
+  ///
+  /// 两家参考工程都这么做（lx 3s / 栖弦 1.8s）：不锁的话，
+  /// 用户往上翻看后面的歌词，一松手就被自动滚动拽回去，永远抢不过。
+  bool _userScrollLocked = false;
+  Timer? _resumeTimer;
+  static const _resumeDelay = Duration(milliseconds: 1800);
+
+  /// 当前行定位在视口高度的比例位置（lx 用 0.38，略高于正中更好读）。
+  static const _anchorRatio = 0.38;
+
   @override
   void dispose() {
+    _resumeTimer?.cancel();
     _controller.dispose();
     super.dispose();
+  }
+
+  /// 用户开始滚动 → 锁定自动跟随并取消进行中的动画。
+  void _holdAutoScroll() {
+    _resumeTimer?.cancel();
+    _userScrollLocked = true;
+    if (_controller.hasClients) {
+      _controller.jumpTo(_controller.offset); // 中断 animateTo
+    }
+  }
+
+  /// 用户停止滚动 → 延迟后恢复自动跟随（回落到当前行）。
+  void _releaseAutoScroll() {
+    if (!_userScrollLocked) return;
+    _resumeTimer?.cancel();
+    _resumeTimer = Timer(_resumeDelay, () {
+      if (!mounted) return;
+      _userScrollLocked = false;
+      _lastIndex = -1; // 强制重新对齐到当前行
+      setState(() {});
+    });
+  }
+
+  bool _onScrollNotification(ScrollNotification n) {
+    // depth==0：只有歌词列表本身的滚动，不响应祖先（PageView）的滚动
+    if (n.depth != 0) return false;
+    if (n is ScrollStartNotification && n.dragDetails != null) {
+      _holdAutoScroll();
+    } else if (n is ScrollUpdateNotification && n.dragDetails != null) {
+      _userScrollLocked = true;
+    } else if (n is ScrollEndNotification) {
+      _releaseAutoScroll();
+    }
+    return false;
+  }
+
+  /// 把当前行滚到视口 [_anchorRatio] 处。
+  void _scrollToActive(int idx) {
+    if (!_controller.hasClients) return;
+    final viewport = _controller.position.viewportDimension;
+    final target = (idx * _itemHeight) - viewport * _anchorRatio +
+        _itemHeight / 2;
+    final max = _controller.position.maxScrollExtent;
+    final clamped = target.clamp(0.0, max <= 0 ? 0.0 : max);
+    _controller.animateTo(clamped,
+        duration: const Duration(milliseconds: 320), curve: Curves.easeOut);
   }
 
   /// 按时间戳从译文/罗马音文档取对应行（±200ms 视为同一行）。
@@ -443,21 +503,18 @@ class _FullLyricsListState extends State<_FullLyricsList> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final idx = widget.parser.currentIndex(widget.doc, widget.position);
-    if (idx >= 0 && idx != _lastIndex) {
+    // 自动跟随：用户正在手动滚动时不抢（_userScrollLocked）
+    if (idx >= 0 && idx != _lastIndex && !_userScrollLocked) {
       _lastIndex = idx;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_controller.hasClients) {
-          final target =
-              (idx - 3).clamp(0, widget.doc.lines.length - 1) * _itemHeight;
-          _controller.animateTo(target,
-              duration: const Duration(milliseconds: 320),
-              curve: Curves.easeOut);
-        }
+        if (mounted && !_userScrollLocked) _scrollToActive(idx);
       });
     }
 
-    return ListView.builder(
-      controller: _controller,
+    return NotificationListener<ScrollNotification>(
+      onNotification: _onScrollNotification,
+      child: ListView.builder(
+        controller: _controller,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       itemExtent: _itemHeight,
       itemCount: widget.doc.lines.length,
@@ -507,7 +564,8 @@ class _FullLyricsListState extends State<_FullLyricsList> {
             ),
           ),
         );
-      },
+        },
+      ),
     );
   }
 }
