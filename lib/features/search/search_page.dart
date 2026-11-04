@@ -123,6 +123,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
     final kw = _controller.text.trim();
     if (kw.isEmpty) return;
     final gen = ++_generation;
+    // 记录搜索历史（去重、最新在前）
+    ref.read(searchHistoryProvider).add(kw);
 
     setState(() {
       _loading = true;
@@ -378,6 +380,45 @@ class _SearchPageState extends ConsumerState<SearchPage>
   Widget _body(ColorScheme scheme) {
     if (_groups.isEmpty) {
       if (_loading) return const SizedBox.shrink();
+      // 空态：有历史就展示历史（点击即重搜），否则给引导文案
+      final history = ref.watch(searchHistoryProvider).items;
+      if (history.isNotEmpty) {
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            Row(children: [
+              Text('搜索历史',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: scheme.onSurfaceVariant)),
+              const Spacer(),
+              TextButton(
+                onPressed: () => ref.read(searchHistoryProvider).clear(),
+                child: const Text('清空', style: TextStyle(fontSize: 12)),
+              ),
+            ]),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final k in history)
+                  InputChip(
+                    label: Text(k, style: const TextStyle(fontSize: 12)),
+                    onPressed: () {
+                      _controller.text = k;
+                      unawaited(_search());
+                    },
+                    onDeleted: () =>
+                        ref.read(searchHistoryProvider).remove(k),
+                    deleteIcon: const Icon(Icons.close, size: 14),
+                  ),
+              ],
+            ),
+          ],
+        );
+      }
       return const Center(
         child: Text('输入关键词开始搜索\n五个平台会同时搜索，结果按源分 Tab 展示',
             textAlign: TextAlign.center),

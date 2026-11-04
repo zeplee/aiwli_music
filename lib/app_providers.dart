@@ -11,7 +11,9 @@ import 'core/services/app_settings.dart';
 import 'core/services/backup_service.dart';
 import 'core/services/favorites_service.dart';
 import 'core/services/logger.dart';
+import 'core/services/play_history_service.dart';
 import 'core/services/playlists.dart';
+import 'core/services/search_history_service.dart';
 import 'core/services/safe_notifier.dart';
 import 'core/services/sleep_timer.dart';
 import 'core/services/webdav_service.dart';
@@ -109,6 +111,18 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
       resolver.reportUnplayable(resolved.winnerId, error: error);
       // 该源名下缓存可能都是死链，一并作废
       resolver.invalidateCacheAll(resolved.winnerId);
+    },
+    // 真正开始播放时写一条播放历史（解析失败/死链不会进历史）
+    onTrackStarted: (item) {
+      ref.read(playHistoryProvider).record(
+            sourceId: item.sourceId,
+            musicId: item.musicId,
+            title: item.title,
+            artist: item.artist,
+            album: item.album,
+            picUrl: item.artUri?.toString(),
+            durationMs: item.duration?.inMilliseconds,
+          );
     },
     // 预取下一首：播放当前曲目时后台解析下一首，切歌时直接命中缓存
     prefetcher: (item) async {
@@ -316,6 +330,12 @@ class DownloadTask {
   int received = 0;
   int total = 0;
   String status = '排队中';
+
+  /// 落库成功后回填：媒体库 uri（content://）与磁盘路径。
+  /// 有 uri 就能直接当本地曲目播放，不必再去系统音乐 App 里找。
+  String? savedUri;
+  String? savedPath;
+  bool get playable => savedUri != null && savedUri!.isNotEmpty;
 }
 
 class DownloadManager extends SafeNotifier {
@@ -371,8 +391,12 @@ class DownloadManager extends SafeNotifier {
             folderName: 'AiwliMusic',
             fileName:
                 '${item.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')}.mp3',
-            onSuccess: (uri, path) => AppLog.i(
-                'Download', '落库成功 ${item.title} uri=$uri'),
+            onSuccess: (uri, path) {
+              task.savedUri = uri;
+              task.savedPath = path;
+              AppLog.i('Download', '落库成功 ${item.title} uri=$uri path=$path');
+              notifyListeners();
+            },
             onError: (msg) => AppLog.e('Download', '落库失败 ${item.title}', msg),
           );
       task
@@ -393,9 +417,27 @@ final downloadManagerProvider =
 
 // ============ 收藏 / WebDAV ============
 
+final playHistoryProvider = ChangeNotifierProvider<PlayHistoryService>((ref) {
+  final svc = PlayHistoryService(ref.watch(settingsStoreProvider));
+  svc.ensureLoaded().then((_) => svc.backfillCovers());
+  ref.onDispose(svc.dispose);
+  return svc;
+});
+
+final searchHistoryProvider =
+    ChangeNotifierProvider<SearchHistoryService>((ref) {
+  final svc = SearchHistoryService(ref.watch(settingsStoreProvider));
+  svc.ensureLoaded();
+  ref.onDispose(svc.dispose);
+  return svc;
+});
+
 final favoritesProvider = ChangeNotifierProvider<FavoritesService>((ref) {
   final svc = FavoritesService(ref.watch(settingsStoreProvider));
-  svc.ensureLoaded();
+  svc.ensureLoaded().then((_) {
+    // 旧数据封面回填（已有封面的条目直接跳过，幂等）
+    svc.backfillCovers();
+  });
   ref.onDispose(svc.dispose);
   return svc;
 });

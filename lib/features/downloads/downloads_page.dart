@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../app_providers.dart';
+import '../../app_providers.dart';
+import '../../player/player_core.dart';
+import '../player/player_page.dart';
 
 /// 下载页：任务列表 + 进度。
 class DownloadsPage extends ConsumerWidget {
@@ -25,6 +27,27 @@ class DownloadsPage extends ConsumerWidget {
                     t.total > 0 ? (t.received / t.total).clamp(0.0, 1.0) : 0.0;
                 return ListTile(
                   leading: const Icon(Icons.audio_file),
+                  trailing: t.playable
+                      ? IconButton(
+                          tooltip: '播放本地文件',
+                          icon: const Icon(Icons.play_circle_outline),
+                          onPressed: () {
+                            // 落库后直接以本地曲目入队：sourceId=local，
+                            // resolvedUrl 指向媒体库 uri，解析器不再取链。
+                            ref.read(playerCoreProvider).setQueue([
+                              PlayerItem(
+                                title: t.title,
+                                artist: t.artist,
+                                sourceId: 'local',
+                                musicId: t.savedUri!,
+                                resolvedUrl: t.savedUri,
+                              )
+                            ], index: 0);
+                            Navigator.of(context).push(MaterialPageRoute<void>(
+                                builder: (_) => const PlayerPage()));
+                          },
+                        )
+                      : null,
                   title: Text(t.title,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Column(

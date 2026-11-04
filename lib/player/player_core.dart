@@ -52,8 +52,11 @@ class PlayerCore {
         urlResolver,
     void Function(ResolvedPlayback resolved, Object error)? onSourceUnplayable,
     Future<void> Function(PlayerItem item)? prefetcher,
+    void Function(PlayerItem item)? onTrackStarted,
     MediaSessionCast? cast,
   }) : _engine = engine,
+        // ignore: prefer_initializing_formals
+        _onTrackStarted = onTrackStarted,
         // ignore: prefer_initializing_formals
         _cast = cast,
         // ignore: prefer_initializing_formals
@@ -76,6 +79,10 @@ class PlayerCore {
   final Future<ResolvedPlayback> Function(PlayerItem item, Set<String> excludeSources)?
       _urlResolver;
   final void Function(ResolvedPlayback resolved, Object error)? _onSourceUnplayable;
+
+  /// 真正开始播放时回调（写播放历史用）。只在引擎播放成功后触发，
+  /// 解析失败/死链不会污染历史。
+  final void Function(PlayerItem item)? _onTrackStarted;
 
   /// 当前加载上下文：引擎的 open 失败是【异步】经 error 流上报的
   /// （mpv "Failed to open <死链>"），同步重试环收不到——
@@ -130,6 +137,38 @@ class PlayerCore {
       (_index >= 0 && _index < _queue.length) ? _queue[_index] : null;
   int get queueLength => _queue.length;
   int get currentIndex => _index;
+
+  /// 只读队列快照（队列面板展示用）。
+  List<PlayerItem> get queue => List.unmodifiable(_queue);
+
+  /// 播放倍速（<1 慢放，>1 快放）。只影响音频，不影响歌词时间轴。
+  double get speed => state.value.speed;
+  Future<void> setSpeed(double v) async {
+    final clamped = v.clamp(0.5, 2.0);
+    state.value = state.value.copyWith(speed: clamped);
+    await _engine.setSpeed(clamped);
+    if (current != null) _pushToCast();
+  }
+
+  /// 从队列移除一条。若移除的是当前曲：正在播放则顺延到下一首，否则只更新索引。
+  Future<void> removeAt(int index) async {
+    if (index < 0 || index >= _queue.length) return;
+    final wasCurrent = index == _index;
+    _queue.removeAt(index);
+    if (_queue.isEmpty) {
+      _index = -1;
+      state.value = state.value.copyWith(playing: false, title: '', artist: '');
+      return;
+    }
+    if (index < _index) {
+      _index--;
+    } else if (wasCurrent) {
+      final next = _index.clamp(0, _queue.length - 1);
+      await _loadAt(next);
+      return;
+    }
+    _pushToCast();
+  }
 
 
   /// 把系统媒体广播（锁屏/通知栏/耳机线控）接到播放核心：
@@ -285,6 +324,7 @@ class PlayerCore {
       if (gen != _loadGeneration) return; // 已被更新的一次切歌覆盖
       await _engine.play();
       _expectCompletion = true;
+      _onTrackStarted?.call(item);
       _prefetchNext();
     } catch (e) {
       if (gen != _loadGeneration) return;

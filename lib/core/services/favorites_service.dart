@@ -2,6 +2,7 @@ import 'dart:convert';
 
 
 import '../storage/settings_store.dart';
+import 'cover_backfill.dart';
 import 'safe_notifier.dart';
 
 /// 收藏的歌曲（持久化 + WebDAV 备份数据源）。
@@ -77,6 +78,45 @@ class FavoritesService extends SafeNotifier {
       ..clear()
       ..addAll([for (final m in list) FavoriteItem.fromMap(m as Map)]);
     notifyListeners();
+  }
+
+  /// 给缺失封面的条目回填 picUrl（旧数据一次性补齐）。
+  Future<int> backfillCovers() async {
+    await ensureLoaded();
+    final missing = _items.where((e) => (e.picUrl ?? '').isEmpty).toList();
+    if (missing.isEmpty) return 0;
+    final pics = await CoverBackfill.resolve([
+      for (final e in missing)
+        (
+          sourceId: e.sourceId,
+          musicId: e.musicId,
+          title: e.title,
+          artist: e.artist
+        ),
+    ]);
+    if (pics.isEmpty) return 0;
+    var hit = 0;
+    for (var i = 0; i < _items.length; i++) {
+      final p = pics['${_items[i].sourceId}/${_items[i].musicId}'];
+      if (p == null || p.isEmpty) continue;
+      final old = _items[i];
+      _items[i] = FavoriteItem(
+        sourceId: old.sourceId,
+        musicId: old.musicId,
+        title: old.title,
+        artist: old.artist,
+        album: old.album,
+        picUrl: p,
+        durationMs: old.durationMs,
+        favoritedAt: old.favoritedAt,
+      );
+      hit++;
+    }
+    if (hit > 0) {
+      await _store.flush(_file, {'items': [for (final e in _items) e.toJson()]});
+      notifyListeners();
+    }
+    return hit;
   }
 
   Future<void> toggle({

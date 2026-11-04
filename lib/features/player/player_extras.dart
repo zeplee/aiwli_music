@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../core/services/app_settings.dart';
+import '../../player/models.dart';
 import '../../player/providers.dart';
 
 /// 音质档位选择（底部弹层）。
@@ -274,6 +275,160 @@ class _EqSheetState extends ConsumerState<_EqSheet> {
           const SizedBox(height: 10),
         ]),
       ),
+    );
+  }
+}
+
+/// 播放队列面板：当前曲高亮、点击跳播、左滑移除。
+Future<void> showQueueSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    builder: (_) => const _QueueSheet(),
+  );
+}
+
+class _QueueSheet extends ConsumerWidget {
+  const _QueueSheet();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final core = ref.watch(playerCoreProvider);
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<PlayerUiState>(
+      valueListenable: core.state,
+      builder: (context, s, _) {
+        final queue = core.queue;
+        final currentIndex = core.currentIndex;
+        return SafeArea(
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.62,
+            child: Column(children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
+                child: Row(children: [
+                  Text('播放队列 · ${queue.length} 首',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: '清空',
+                    onPressed: queue.isEmpty
+                        ? null
+                        : () async {
+                            for (var i = queue.length - 1; i >= 0; i--) {
+                              await core.removeAt(i);
+                            }
+                          },
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 20),
+                  ),
+                ]),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: queue.isEmpty
+                    ? const Center(child: Text('队列为空'))
+                    : ListView.builder(
+                        itemCount: queue.length,
+                        itemBuilder: (context, i) {
+                          final it = queue[i];
+                          final active = i == currentIndex;
+                          return Dismissible(
+                            key: ValueKey('queue_${it.sourceId}_${it.musicId}_$i'),
+                            direction: DismissDirection.endToStart,
+                            background: Container(
+                              color: scheme.errorContainer,
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 20),
+                              child: Icon(Icons.delete_outline,
+                                  color: scheme.onErrorContainer),
+                            ),
+                            onDismissed: (_) => core.removeAt(i),
+                            child: ListTile(
+                              dense: true,
+                              leading: Icon(
+                                active
+                                    ? Icons.graphic_eq
+                                    : Icons.music_note_outlined,
+                                color: active
+                                    ? scheme.primary
+                                    : scheme.onSurfaceVariant,
+                                size: 20,
+                              ),
+                              title: Text(
+                                it.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: active ? scheme.primary : null,
+                                  fontWeight:
+                                      active ? FontWeight.bold : null,
+                                ),
+                              ),
+                              subtitle: Text(it.artist,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12)),
+                              onTap: () => core.playAt(i),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ]),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 倍速选择（0.5x – 2.0x）。
+Future<void> showSpeedSheet(BuildContext context) {
+  return showModalBottomSheet<void>(
+    context: context,
+    builder: (_) => const _SpeedSheet(),
+  );
+}
+
+class _SpeedSheet extends ConsumerWidget {
+  const _SpeedSheet();
+
+  static const _rates = <double>[0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final core = ref.watch(playerCoreProvider);
+    final scheme = Theme.of(context).colorScheme;
+    return ValueListenableBuilder<PlayerUiState>(
+      valueListenable: core.state,
+      builder: (context, s, _) {
+        return SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Text('播放速度',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final r in _rates)
+                  ChoiceChip(
+                    label: Text('${r}x'),
+                    selected: (s.speed - r).abs() < 0.001,
+                    selectedColor: scheme.primaryContainer,
+                    onSelected: (_) {
+                      core.setSpeed(r);
+                      Navigator.of(context).maybePop();
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ]),
+        );
+      },
     );
   }
 }

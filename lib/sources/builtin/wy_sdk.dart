@@ -80,9 +80,19 @@ class WySdk {
       if (item is! Map) continue;
       final id = '${item['id'] ?? ''}';
       if (id.isEmpty) continue;
-      final album = item['album'];
+      // eapi 不同接口把专辑放在 album / al 下，字段名也可能是 picId / picUrl
+      final album = item['album'] ?? item['al'];
       final durMs = num.tryParse('${item['duration'] ?? 0}');
-      final pic = album is Map ? '${album['picUrl'] ?? ''}' : '';
+      // 搜索接口的 album 往往只有 picId（无 picUrl），
+      // 网易封面 CDN 规则：https://p{n}.music.126.net/{picId}?param=300y300
+      var pic = album is Map ? '${album['picUrl'] ?? ''}' : '';
+      if (pic.isEmpty && album is Map) {
+        final picId = '${album['picId'] ?? ''}';
+        // 注意必须有 .jpg 后缀，否则 CDN 返回 404
+        if (picId.isNotEmpty && picId != '0') {
+          pic = 'https://p1.music.126.net/$picId.jpg';
+        }
+      }
       out.add(buildSong(
         sourceId: sourceId,
         musicId: id,

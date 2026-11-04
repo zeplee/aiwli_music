@@ -46,7 +46,23 @@ class DiscoverPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final core = ref.watch(playerCoreProvider);
     final favorites = ref.watch(favoritesProvider);
-    final recent = _recentOf(core);
+    // 「继续聆听」用真实播放历史（之前只显示当前一首，形同虚设）
+    final history = ref.watch(playHistoryProvider).items;
+    final recent = [
+      for (final h in history.take(10))
+        PlayerItem(
+          title: h.title,
+          artist: h.artist,
+          sourceId: h.sourceId,
+          musicId: h.musicId,
+          album: h.album,
+          artUri: (h.picUrl == null || h.picUrl!.isEmpty)
+              ? null
+              : Uri.tryParse(h.picUrl!),
+          duration:
+              h.durationMs == null ? null : Duration(milliseconds: h.durationMs!),
+        ),
+    ];
 
     return Scaffold(
       appBar: AppBar(title: const Text('发现')),
@@ -172,7 +188,29 @@ class DiscoverPage extends ConsumerWidget {
               subtitle: Text(f.artist,
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               trailing: const Icon(Icons.favorite, color: Color(0xFFE57373)),
-              onTap: () {},
+              // 点击播放：把整个收藏列表入队，从这一首开始
+              onTap: () {
+                final favItems = [
+                  for (final x in favorites.items)
+                    PlayerItem(
+                      title: x.title,
+                      artist: x.artist,
+                      sourceId: x.sourceId,
+                      musicId: x.musicId,
+                      album: x.album,
+                      artUri: (x.picUrl == null || x.picUrl!.isEmpty)
+                          ? null
+                          : Uri.tryParse(x.picUrl!),
+                      duration: x.durationMs == null
+                          ? null
+                          : Duration(milliseconds: x.durationMs!),
+                    ),
+                ];
+                final idx = favorites.items.indexOf(f);
+                core.setQueue(favItems, index: idx < 0 ? 0 : idx);
+                Navigator.of(context).push(MaterialPageRoute<void>(
+                    builder: (_) => const PlayerPage()));
+              },
             ),
         ],
         // —— 继续聆听 ——
@@ -205,11 +243,6 @@ class DiscoverPage extends ConsumerWidget {
     );
   }
 
-  static List<PlayerItem> _recentOf(PlayerCore core) {
-    final cur = core.current;
-    if (cur == null) return const [];
-    return [cur];
-  }
 }
 
 class _SectionHeader extends StatelessWidget {

@@ -65,7 +65,11 @@ class MgSdk {
         if (!seen.add(copyrightId)) continue;
 
         final durNum = num.tryParse('${data['duration'] ?? 0}');
-        final pics = data['img3'] ?? data['img2'] ?? data['img1'] ?? '';
+        // 咪咕返回相对路径（/data/oss/resource/...），需补全 CDN host
+        var pics = '${data['img3'] ?? data['img2'] ?? data['img1'] ?? ''}';
+        if (pics.isNotEmpty && !pics.startsWith('http')) {
+          pics = 'https://h5.nf.migu.cn${pics.startsWith('/') ? '' : '/'}$pics';
+        }
         out.add(buildSong(
           sourceId: sourceId,
           musicId: songId,
@@ -73,7 +77,7 @@ class MgSdk {
           artist: joinSingers(data['singerList']),
           album: '${data['album'] ?? ''}',
           albumId: '${data['albumId'] ?? ''}',
-          picUrl: '$pics'.isEmpty ? null : '$pics',
+          picUrl: pics.isEmpty ? null : pics,
           duration: durNum == null ? null : Duration(seconds: durNum.round()),
           qualities: _qualitys(data),
         ));

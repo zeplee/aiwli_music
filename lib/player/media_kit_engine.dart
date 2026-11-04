@@ -91,6 +91,13 @@ class MediaKitEngine implements AudioEngine {
   Future<void> setVolume(double v) => _player.setVolume(v * 100);
 
   @override
+  Future<void> setSpeed(double v) async {
+    final r = v.clamp(0.5, 2.0);
+    await _player.setRate(r);
+    _emit(speed: r);
+  }
+
+  @override
   Future<void> setEqualizer(List<double>? gainsDb) async {
     final platform = _player.platform;
     if (platform is! NativePlayer) return;

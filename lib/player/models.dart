@@ -48,6 +48,7 @@ class PlayerUiState {
     this.error,
     this.repeatMode = RepeatMode.off,
     this.shuffleOn = false,
+    this.speed = 1.0,
   });
   final EngineProcessing processing;
   final bool playing;
@@ -58,6 +59,7 @@ class PlayerUiState {
   final Object? error;
   final RepeatMode repeatMode;
   final bool shuffleOn;
+  final double speed;
 
   PlayerUiState copyWith({
     EngineProcessing? processing,
@@ -69,6 +71,7 @@ class PlayerUiState {
     Object? error,
     RepeatMode? repeatMode,
     bool? shuffleOn,
+    double? speed,
   }) {
     return PlayerUiState(
       processing: processing ?? this.processing,
@@ -80,6 +83,7 @@ class PlayerUiState {
       error: error,
       repeatMode: repeatMode ?? this.repeatMode,
       shuffleOn: shuffleOn ?? this.shuffleOn,
+      speed: speed ?? this.speed,
     );
   }
 }

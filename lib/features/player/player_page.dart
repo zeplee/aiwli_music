@@ -43,37 +43,81 @@ class PlayerPage extends ConsumerWidget {
                     icon: const Icon(Icons.keyboard_arrow_down, size: 30),
                   ),
                   const Spacer(),
-                  // 定时关闭
+                  // 播放队列：最常用，单独留一个入口
                   IconButton(
-                    tooltip: '定时关闭',
-                    onPressed: () => showSleepTimerSheet(context),
-                    icon: Icon(Icons.bedtime_outlined,
-                        color: sleep.active
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant),
+                    tooltip: '播放队列',
+                    onPressed: () => showQueueSheet(context),
+                    icon: Icon(Icons.queue_music,
+                        color: scheme.onSurfaceVariant),
                   ),
-                  // 均衡器
-                  IconButton(
-                    tooltip: '均衡器',
-                    onPressed: () => showEqSheet(context),
-                    icon: Icon(Icons.equalizer,
-                        color: settings.eqEnabled
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant),
-                  ),
-                  // 音质档位
+                  // 倍速：非 1x 时高亮（一眼看出当前是变速播放）
                   InkWell(
-                    onTap: () => showQualitySheet(context),
+                    onTap: () => showSpeedSheet(context),
                     borderRadius: BorderRadius.circular(8),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 6),
-                      child: Text(settings.quality.label,
-                          style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                              color: scheme.primary)),
+                          horizontal: 6, vertical: 8),
+                      child: Text(
+                        s.speed == 1.0 ? '1.0x' : '${_fmtRate(s.speed)}x',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: s.speed == 1.0
+                                ? scheme.onSurfaceVariant
+                                : scheme.primary),
+                      ),
                     ),
+                  ),
+                  // 其余低频操作收进「更多」，避免顶栏 6 个图标挤成一排
+                  PopupMenuButton<String>(
+                    tooltip: '更多',
+                    icon: Icon(Icons.more_horiz,
+                        color: scheme.onSurfaceVariant),
+                    onSelected: (v) {
+                      switch (v) {
+                        case 'sleep':
+                          showSleepTimerSheet(context);
+                        case 'eq':
+                          showEqSheet(context);
+                        case 'quality':
+                          showQualitySheet(context);
+                      }
+                    },
+                    itemBuilder: (_) => [
+                      PopupMenuItem(
+                        value: 'sleep',
+                        child: Row(children: [
+                          Icon(Icons.bedtime_outlined,
+                              size: 18,
+                              color: sleep.active
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant),
+                          const SizedBox(width: 10),
+                          Text(sleep.active ? '定时关闭 · 已开启' : '定时关闭'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'eq',
+                        child: Row(children: [
+                          Icon(Icons.equalizer,
+                              size: 18,
+                              color: settings.eqEnabled
+                                  ? scheme.primary
+                                  : scheme.onSurfaceVariant),
+                          const SizedBox(width: 10),
+                          Text(settings.eqEnabled ? '均衡器 · 已开启' : '均衡器'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'quality',
+                        child: Row(children: [
+                          Icon(Icons.high_quality,
+                              size: 18, color: scheme.primary),
+                          const SizedBox(width: 10),
+                          Text('音质：${settings.quality.label}'),
+                        ]),
+                      ),
+                    ],
                   ),
                   IconButton(
                     tooltip: isFav ? '已收藏 · 点击取消' : '收藏到「我的收藏」',
@@ -200,6 +244,13 @@ class PlayerPage extends ConsumerWidget {
     );
   }
 
+
+  /// 1.25 → 1.25, 1.50 → 1.5, 0.75 → 0.75
+  static String _fmtRate(double v) {
+    final t = v.toStringAsFixed(2);
+    if (t.endsWith('0')) return t.substring(0, t.length - 1);
+    return t;
+  }
 
   static String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');

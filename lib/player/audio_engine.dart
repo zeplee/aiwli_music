@@ -12,6 +12,9 @@ abstract interface class AudioEngine {
   Future<void> seek(Duration position);
   Future<void> setVolume(double v);
 
+  /// 播放倍速（0.5–2.0）。media_kit 用 Player.setRate。
+  Future<void> setSpeed(double v);
+
   /// 10 段均衡器（dB，对应 AppSettings.eqBandHz）；null/关 = 关闭。
   Future<void> setEqualizer(List<double>? gainsDb);
 
@@ -38,6 +41,8 @@ class StubEngine implements AudioEngine {
   Future<void> seek(Duration position) async {}
   @override
   Future<void> setVolume(double v) async {}
+  @override
+  Future<void> setSpeed(double v) async {}
   @override
   Future<void> setEqualizer(List<double>? gainsDb) async {}
   @override
