@@ -155,6 +155,7 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
                 roman: lyric.current.roman,
                 showTranslation: settings.lyricTranslation,
                 showRoman: settings.lyricRoman,
+                lyricFontSize: settings.lyricFontSize,
                 onSeek: (pos) => core.seek(pos),
               ),
             ),
@@ -404,6 +405,7 @@ class _FullLyricsList extends StatefulWidget {
     this.showTranslation = true,
     this.showRoman = true,
     this.onSeek,
+    this.lyricFontSize = 19,
   });
   final LyricDocument doc;
   final LrcParser parser;
@@ -416,13 +418,15 @@ class _FullLyricsList extends StatefulWidget {
   /// 点击某一行歌词 → seek 到该行起始时间（规格 §2.1）。
   final void Function(Duration position)? onSeek;
 
+  /// 主歌词字号（跟随歌词设置，独立于系统字号）。
+  final double lyricFontSize;
+
   @override
   State<_FullLyricsList> createState() => _FullLyricsListState();
 }
 
 class _FullLyricsListState extends State<_FullLyricsList> {
   final _controller = ScrollController();
-  static const _itemHeight = 56.0;
   int _lastIndex = -1;
 
   /// 用户手动滚动时暂停自动跟随。
@@ -478,13 +482,19 @@ class _FullLyricsListState extends State<_FullLyricsList> {
   }
 
   /// 把当前行滚到视口 [_anchorRatio] 处。
+  ///
+  /// 行高不再固定（含译文/罗马音的行更高），所以用「总高度 / 行数」
+  /// 估算平均行高定位；随后由 ListView 的自然布局收敛，误差在可接受范围。
   void _scrollToActive(int idx) {
     if (!_controller.hasClients) return;
-    final viewport = _controller.position.viewportDimension;
-    final target = (idx * _itemHeight) - viewport * _anchorRatio +
-        _itemHeight / 2;
-    final max = _controller.position.maxScrollExtent;
-    final clamped = target.clamp(0.0, max <= 0 ? 0.0 : max);
+    final pos = _controller.position;
+    final viewport = pos.viewportDimension;
+    final lineCount = widget.doc.lines.length;
+    if (lineCount == 0) return;
+    final avgHeight = pos.maxScrollExtent + viewport;
+    final perLine = avgHeight / lineCount;
+    final target = (idx * perLine) - viewport * _anchorRatio + perLine / 2;
+    final clamped = target.clamp(0.0, pos.maxScrollExtent);
     _controller.animateTo(clamped,
         duration: const Duration(milliseconds: 320), curve: Curves.easeOut);
   }
@@ -557,7 +567,8 @@ class _FullLyricsListState extends State<_FullLyricsList> {
       child: ListView.builder(
         controller: _controller,
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-      itemExtent: _itemHeight,
+      // 不能用 itemExtent：有译文/罗马音的行高出 2 行，
+      // 固定行高会把它们裁掉。改为让每行自撑高度。
       itemCount: widget.doc.lines.length,
       itemBuilder: (context, i) {
         final active = i == idx;
@@ -577,10 +588,12 @@ class _FullLyricsListState extends State<_FullLyricsList> {
                       line: widget.doc.lines[i],
                       wordIndex: widget.parser.currentWordIndex(
                           widget.doc.lines[i], widget.position),
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        // 字号跟随歌词设置（独立于系统字号）
+                        fontSize: widget.lyricFontSize,
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onSurface,
+                      ),
                       unsungColor: scheme.onSurface,
                     )
                   : Text(widget.doc.lines[i].text,
@@ -589,16 +602,43 @@ class _FullLyricsListState extends State<_FullLyricsList> {
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           color: scheme.onSurfaceVariant, fontSize: 14)),
-                if (i == idx && (tr != null || ro != null))
+                // 翻译 / 罗马音各占**独立一行**，与主歌词拉开行距。
+                //
+                // 参考栖弦 lyric_line.dart：译文用 0.6 倍字号、height 1.30、
+                // padding top 8，主歌词 height 1.20；罗马音再另起一行。
+                // 之前的实现把两者用「·」拼成一行 11px 小字、间距只有 2px，
+                // 视觉上和原歌词粘成一行，分不清哪句是译文。
+                if (i == idx && tr != null)
                   Padding(
-                    padding: const EdgeInsets.only(top: 2),
+                    padding: const EdgeInsets.only(top: 8, left: 16, right: 16),
                     child: Text(
-                      [?tr, ?ro].join('  ·  '),
-                      maxLines: 1,
+                      tr,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.center,
                       style: TextStyle(
-                          fontSize: 11, color: scheme.onSurfaceVariant),
+                        // 译文按主字号 0.6 倍（参考栖弦 lyricTranslationFontSize）
+                        fontSize: widget.lyricFontSize * 0.6,
+                        height: 1.30,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                if (i == idx && ro != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, left: 16, right: 16),
+                    child: Text(
+                      ro,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: widget.lyricFontSize * 0.55,
+                        height: 1.30,
+                        fontStyle: FontStyle.italic,
+                        color: scheme.onSurfaceVariant
+                            .withValues(alpha: 0.85),
+                      ),
                     ),
                   ),
               ],

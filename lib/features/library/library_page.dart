@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:on_audio_query_pluse/on_audio_query.dart';
 
@@ -143,10 +144,16 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     return id > 0 ? _artCache[id] : null;
   }
 
-  /// 搜索 + 排序后的可见列表。
+  /// 搜索 + 排序后的可见列表（先按目录白名单过滤）。
   List<SongModel> get _visible {
     final all = _songs ?? const <SongModel>[];
-    var list = all;
+    final dirs = ref.read(appSettingsProvider).localMusicDirs;
+    var list = dirs.isEmpty
+        ? all
+        : [
+            for (final s in all)
+              if (dirs.any((d) => s.data.startsWith(d))) s,
+          ];
     final q = _query.trim().toLowerCase();
     if (q.isNotEmpty) {
       list = [
@@ -310,6 +317,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
               onPressed: _showSortSheet,
               icon: const Icon(Icons.sort),
             ),
+            IconButton(
+              tooltip: '扫描目录',
+              onPressed: _showDirSheet,
+              icon: const Icon(Icons.folder_open),
+            ),
           ],
         ],
       ),
@@ -336,6 +348,93 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                     onPressed: () => s.playing ? core.pause() : core.play(),
                     icon: Icon(s.playing ? Icons.pause : Icons.play_arrow)),
                 IconButton(onPressed: core.next, icon: const Icon(Icons.skip_next)),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 扫描目录设置：只显示指定目录下的歌曲（参考栖弦 directory_picker_tile）。
+  Future<void> _showDirSheet() async {
+    final settings = ref.read(appSettingsProvider);
+    final scheme = Theme.of(context).colorScheme;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) {
+          final dirs = settings.localMusicDirs;
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Row(children: [
+                  Text('扫描目录',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const Spacer(),
+                  if (dirs.isNotEmpty)
+                    TextButton(
+                      onPressed: () async {
+                        await ref
+                            .read(appSettingsProvider)
+                            .setLocalMusicDirs(const []);
+                        await _load();
+                        if (context.mounted) Navigator.of(context).pop();
+                      },
+                      child: const Text('扫描全部', style: TextStyle(fontSize: 12)),
+                    ),
+                ]),
+                const SizedBox(height: 4),
+                Text(
+                  dirs.isEmpty
+                      ? '当前扫描全部目录'
+                      : '当前只显示 ${dirs.length} 个目录下的歌曲',
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                ),
+                const SizedBox(height: 10),
+                for (final d in dirs)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.folder, size: 18),
+                    title: Text(
+                      d.split('/').where((x) => x.isNotEmpty).lastOrNull ?? d,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    subtitle: Text(d,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 10)),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.close, size: 16),
+                      onPressed: () async {
+                        final next = [...dirs]..remove(d);
+                        await ref
+                            .read(appSettingsProvider)
+                            .setLocalMusicDirs(next);
+                        await _load();
+                        if (context.mounted) setSheet(() {});
+                      },
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: () async {
+                    // Android 上选目录：用 file_selector 的目录选择
+                    final dir = await getDirectoryPath();
+                    if (dir == null) return;
+                    await ref
+                        .read(appSettingsProvider)
+                        .setLocalMusicDirs([...dirs, dir]);
+                    await _load();
+                    if (context.mounted) setSheet(() {});
+                  },
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('添加目录'),
+                ),
               ]),
             ),
           );

@@ -18,6 +18,22 @@ class AppSettings extends SafeNotifier {
   /// 歌词翻译 / 罗马音显示开关（网易源提供时才有意义）。
   bool lyricTranslation = true;
   bool lyricRoman = true;
+
+  /// 歌词字号档位（参考栖弦 lyric_settings_sheet：字号独立于系统字号，
+  /// 便于车载/大屏单独放大）。1=小 2=中 3=大 4=特大。
+  int lyricSizeLevel = 2;
+
+  /// 本地音乐扫描目录白名单（空列表 = 扫描全部目录）。
+  /// 参考栖弦 settings 的 directory_picker_tile：让用户指定只看某个文件夹。
+  List<String> localMusicDirs = [];
+
+  /// 该档位对应的主歌词字号。
+  double get lyricFontSize => switch (lyricSizeLevel) {
+        1 => 15,
+        3 => 23,
+        4 => 28,
+        _ => 19,
+      };
   List<double> eqGains = List.filled(eqBandHz.length, 0);
   String eqPreset = 'flat';
 
@@ -33,6 +49,11 @@ class AppSettings extends SafeNotifier {
     songSortAscending = m['songSortAscending'] != false;
     lyricTranslation = m['lyricTranslation'] != false;
     lyricRoman = m['lyricRoman'] != false;
+    lyricSizeLevel = (m['lyricSizeLevel'] as num?)?.toInt() ?? 2;
+    final dirs = m['localMusicDirs'] as List?;
+    if (dirs != null) {
+      localMusicDirs = dirs.whereType<String>().toList();
+    }
     eqPreset = m['eqPreset'] as String? ?? 'flat';
     final g = m['eqGains'] as List?;
     if (g != null && g.length == eqBandHz.length) {
@@ -49,14 +70,18 @@ class AppSettings extends SafeNotifier {
         'eqGains': eqGains,
         'lyricTranslation': lyricTranslation,
         'lyricRoman': lyricRoman,
+        'lyricSizeLevel': lyricSizeLevel,
+        'localMusicDirs': localMusicDirs,
         'sleepTimerMinutes': sleepTimerMinutes,
         'songSort': songSort,
         'songSortAscending': songSortAscending,
       });
 
-  Future<void> setLyricPrefs({bool? translation, bool? roman}) async {
+  Future<void> setLyricPrefs(
+      {bool? translation, bool? roman, int? sizeLevel}) async {
     if (translation != null) lyricTranslation = translation;
     if (roman != null) lyricRoman = roman;
+    if (sizeLevel != null) lyricSizeLevel = sizeLevel.clamp(1, 4);
     notifyListeners();
     await _flush();
   }
@@ -67,6 +92,13 @@ class AppSettings extends SafeNotifier {
   /// 音乐库排序偏好（对齐参考工程：排序方式也需跨会话记忆）。
   String songSort = 'title';
   bool songSortAscending = true;
+
+  /// 设置本地音乐扫描目录（传空列表 = 扫描全部）。
+  Future<void> setLocalMusicDirs(List<String> dirs) async {
+    localMusicDirs = List<String>.from(dirs);
+    notifyListeners();
+    await _flush();
+  }
 
   Future<void> setSongSort(String sort, bool ascending) async {
     songSort = sort;

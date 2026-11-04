@@ -9,6 +9,7 @@ import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../core/ui/cover_palette.dart';
 import '../../player/models.dart';
+import 'lyric_settings.dart';
 import 'lyrics_view.dart';
 import '../../player/player_core.dart';
 import 'player_extras.dart';
@@ -164,6 +165,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                           showEqSheet(context);
                         case 'quality':
                           showQualitySheet(context);
+                        case 'lyric':
+                          showLyricSettingsSheet(context);
                       }
                     },
                     itemBuilder: (_) => [
@@ -189,6 +192,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                                   : scheme.onSurfaceVariant),
                           const SizedBox(width: 10),
                           Text(settings.eqEnabled ? '均衡器 · 已开启' : '均衡器'),
+                        ]),
+                      ),
+                      PopupMenuItem(
+                        value: 'lyric',
+                        child: Row(children: [
+                          Icon(Icons.text_fields,
+                              size: 18, color: scheme.onSurfaceVariant),
+                          const SizedBox(width: 10),
+                          const Text('歌词设置（字号 / 翻译）'),
                         ]),
                       ),
                       PopupMenuItem(
