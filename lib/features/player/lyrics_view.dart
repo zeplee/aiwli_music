@@ -579,73 +579,75 @@ class _FullLyricsListState extends State<_FullLyricsList> {
           onTap: widget.onSeek == null
               ? null
               : () => widget.onSeek!(widget.doc.lines[i].start),
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                active
-                  ? _KaraokeLine(
-                      line: widget.doc.lines[i],
-                      wordIndex: widget.parser.currentWordIndex(
-                          widget.doc.lines[i], widget.position),
-                      style: TextStyle(
-                        // 字号跟随歌词设置（独立于系统字号）
-                        fontSize: widget.lyricFontSize,
-                        fontWeight: FontWeight.bold,
-                        color: scheme.onSurface,
-                      ),
-                      unsungColor: scheme.onSurface,
-                    )
-                  : Text(widget.doc.lines[i].text,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: scheme.onSurfaceVariant, fontSize: 14)),
-                // 翻译 / 罗马音各占**独立一行**，与主歌词拉开行距。
-                //
-                // 参考栖弦 lyric_line.dart：译文用 0.6 倍字号、height 1.30、
-                // padding top 8，主歌词 height 1.20；罗马音再另起一行。
-                // 之前的实现把两者用「·」拼成一行 11px 小字、间距只有 2px，
-                // 视觉上和原歌词粘成一行，分不清哪句是译文。
-                if (i == idx && tr != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8, left: 16, right: 16),
-                    child: Text(
-                      tr,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        // 译文按主字号 0.6 倍（参考栖弦 lyricTranslationFontSize）
-                        fontSize: widget.lyricFontSize * 0.6,
-                        height: 1.30,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                if (i == idx && ro != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4, left: 16, right: 16),
-                    child: Text(
-                      ro,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: widget.lyricFontSize * 0.55,
-                        height: 1.30,
-                        fontStyle: FontStyle.italic,
-                        color: scheme.onSurfaceVariant
-                            .withValues(alpha: 0.85),
+          child: Padding(
+            // 关键：内紧外松。
+            // 译文紧贴原文（top 2），而每行**底部留 20** 作为行与行之间的
+            // 间距 —— 这样视觉上「原文+译文」是一个整体，不同歌词之间才分开。
+            // 之前是反的：译文 top 8、行间无间距，导致译文看起来像独立的歌词行。
+            padding: const EdgeInsets.only(bottom: 20),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  active
+                      ? _KaraokeLine(
+                          line: widget.doc.lines[i],
+                          wordIndex: widget.parser.currentWordIndex(
+                              widget.doc.lines[i], widget.position),
+                          style: TextStyle(
+                            // 字号跟随歌词设置（独立于系统字号）
+                            fontSize: widget.lyricFontSize,
+                            fontWeight: FontWeight.bold,
+                            color: scheme.onSurface,
+                          ),
+                          unsungColor: scheme.onSurface,
+                        )
+                      : Text(widget.doc.lines[i].text,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: scheme.onSurfaceVariant, fontSize: 14)),
+                  // 译文紧贴原文（2px），字号 0.6 倍
+                  if (i == idx && tr != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        tr,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: widget.lyricFontSize * 0.6,
+                          height: 1.25,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
-                  ),
-              ],
+                  // 罗马音紧随译文（1px），与译文一起构成"同一句"的注释
+                  if (i == idx && ro != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Text(
+                        ro,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: widget.lyricFontSize * 0.55,
+                          height: 1.25,
+                          fontStyle: FontStyle.italic,
+                          color: scheme.onSurfaceVariant
+                              .withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         );
-        },
+      },
       ),
     );
   }
