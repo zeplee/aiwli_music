@@ -20,6 +20,22 @@ class PlaylistDetailPage extends ConsumerStatefulWidget {
 }
 
 class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
+  /// 批量选择模式（参考栖弦 playlist_detail_page 的 _batchMode）。
+  bool _batchMode = false;
+  final Set<int> _selected = <int>{};
+
+  void _exitBatch() => setState(() {
+        _batchMode = false;
+        _selected.clear();
+      });
+
+  void _toggleSelect(int index) {
+    setState(() {
+      if (!_selected.remove(index)) _selected.add(index);
+      if (_selected.isEmpty) _batchMode = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = ref.watch(playlistsProvider);
@@ -46,22 +62,64 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(playlist.name),
-        actions: [
-          IconButton(
-            tooltip: '重命名',
-            icon: const Icon(Icons.edit_outlined),
-            onPressed: () => _rename(context, service, playlist),
-          ),
-          IconButton(
-            tooltip: '删除歌单',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () {
-              service.delete(playlist.id);
-              Navigator.of(context).pop();
-            },
-          ),
-        ],
+        leading: _batchMode
+            ? IconButton(
+                tooltip: '退出多选',
+                icon: const Icon(Icons.close),
+                onPressed: _exitBatch,
+              )
+            : null,
+        title: Text(_batchMode ? '已选 ${_selected.length}' : playlist.name),
+        actions: _batchMode
+            ? [
+                IconButton(
+                  tooltip: '全选',
+                  icon: const Icon(Icons.select_all),
+                  onPressed: () => setState(() {
+                    if (_selected.length == playlist.entries.length) {
+                      _selected.clear();
+                    } else {
+                      _selected
+                        ..clear()
+                        ..addAll(List.generate(playlist.entries.length, (i) => i));
+                    }
+                  }),
+                ),
+                IconButton(
+                  tooltip: '移动到其他歌单',
+                  icon: const Icon(Icons.drive_file_move_outline),
+                  onPressed: _selected.isEmpty
+                      ? null
+                      : () => _moveSelected(playlist),
+                ),
+                IconButton(
+                  tooltip: '删除所选',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: _selected.isEmpty
+                      ? null
+                      : () => _deleteSelected(playlist),
+                ),
+              ]
+            : [
+                IconButton(
+                  tooltip: '多选',
+                  icon: const Icon(Icons.checklist),
+                  onPressed: playlist.entries.isEmpty
+                      ? null
+                      : () => setState(() => _batchMode = true),
+                ),
+                IconButton(
+                  tooltip: '重命名',
+                  icon: const Icon(Icons.edit_outlined),
+                  onPressed: () => _rename(context, service, playlist),
+                ),
+                if (!playlist.system)
+                  IconButton(
+                    tooltip: '删除歌单',
+                    icon: const Icon(Icons.delete_forever_outlined),
+                    onPressed: () => _confirmDeletePlaylist(playlist),
+                  ),
+              ],
       ),
       body: playlist.entries.isEmpty
           ? Center(
@@ -71,32 +129,50 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
               itemCount: playlist.entries.length,
               itemBuilder: (context, i) {
                 final e = playlist.entries[i];
+                final selected = _selected.contains(i);
                 return ListTile(
-                  leading: const Icon(Icons.music_note),
+                  selected: selected,
+                  selectedTileColor:
+                      scheme.secondaryContainer.withValues(alpha: 0.5),
+                  leading: _batchMode
+                      ? Checkbox(
+                          value: selected,
+                          onChanged: (_) => _toggleSelect(i),
+                        )
+                      : const Icon(Icons.music_note),
                   title: Text(e.title,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(e.artist,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
-                  trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                    IconButton(
-                      icon: Icon(Icons.play_circle_outline,
-                          size: 22,
-                          color: Theme.of(context).colorScheme.primary),
-                      tooltip: '播放',
-                      onPressed: () {
-                        final items = [
-                          for (final e in playlist.entries) entryToItem(e)
-                        ];
-                        ref.read(playerCoreProvider).setQueue(items, index: i);
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      tooltip: '移出歌单',
-                      onPressed: () => service.removeEntry(playlist.id, i),
-                    ),
-                  ]),
+                  trailing: _batchMode
+                      ? null
+                      : Row(mainAxisSize: MainAxisSize.min, children: [
+                          IconButton(
+                            icon: Icon(Icons.play_circle_outline,
+                                size: 22, color: scheme.primary),
+                            tooltip: '播放',
+                            onPressed: () {
+                              final items = [
+                                for (final e in playlist.entries)
+                                  entryToItem(e)
+                              ];
+                              ref
+                                  .read(playerCoreProvider)
+                                  .setQueue(items, index: i);
+                            },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            tooltip: '移出歌单',
+                            onPressed: () =>
+                                service.removeEntry(playlist.id, i),
+                          ),
+                        ]),
                   onTap: () {
+                    if (_batchMode) {
+                      _toggleSelect(i);
+                      return;
+                    }
                     final items = [
                       for (final e in playlist.entries) entryToItem(e)
                     ];
@@ -104,64 +180,200 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                     Navigator.of(context).push(MaterialPageRoute<void>(
                         builder: (_) => const PlayerPage()));
                   },
+                  // 长按进入多选（与音乐库一致的手势）
+                  onLongPress: () {
+                    setState(() {
+                      _batchMode = true;
+                      _selected.add(i);
+                    });
+                  },
                 );
               },
             ),
-      bottomNavigationBar: playlist.entries.isEmpty
-          ? null
-          : SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: FilledButton.icon(
-                  onPressed: () {
-                    final items = [
-                      for (final e in playlist.entries) entryToItem(e)
-                    ];
-                    ref.read(playerCoreProvider).setQueue(items, index: 0);
-                    Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => const PlayerPage()));
-                  },
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('播放全部'),
-                ),
+      bottomNavigationBar: _batchMode && _selected.isNotEmpty
+          ? SafeArea(
+              child: Container(
+                color: scheme.surfaceContainerHighest,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(children: [
+                  Text('已选 ${_selected.length} / ${playlist.entries.length}',
+                      style: TextStyle(
+                          fontSize: 12, color: scheme.onSurfaceVariant)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () => _moveSelected(playlist),
+                    icon: const Icon(Icons.drive_file_move_outline, size: 18),
+                    label: const Text('移动'),
+                  ),
+                  const SizedBox(width: 4),
+                  FilledButton.icon(
+                    onPressed: () => _deleteSelected(playlist),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('删除'),
+                    style: FilledButton.styleFrom(
+                        backgroundColor: scheme.errorContainer,
+                        foregroundColor: scheme.onErrorContainer),
+                  ),
+                ]),
               ),
-            ),
+            )
+          : null,
     );
   }
 
-  Future<void> _rename(BuildContext context, PlaylistService service,
-      Playlist playlist) async {
+  Future<void> _confirmDeletePlaylist(Playlist playlist) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除歌单「${playlist.name}」？'),
+        content: Text('歌单内的 ${playlist.entries.length} 首会一并移除（不会删除本地文件）。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      ref.read(playlistsProvider).delete(playlist.id);
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// 批量删除所选（倒序删除避免索引错位）。
+  Future<void> _deleteSelected(Playlist playlist) async {
+    if (_selected.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除所选的 ${_selected.length} 首？'),
+        content: const Text('只从该歌单移除，不会删除本地文件。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    final service = ref.read(playlistsProvider);
+    final indices = _selected.toSet();
+    final count = indices.length;
+    service.removeEntries(playlist.id, indices);
+    _exitBatch();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('已删除 $count 首'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
+  /// 批量移动到其他歌单（可跨文件夹）。
+  Future<void> _moveSelected(Playlist playlist) async {
+    if (_selected.isEmpty) return;
+    final service = ref.read(playlistsProvider);
+    final targets = service.sorted.where((p) => p.id != playlist.id).toList();
+    if (targets.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('没有其他歌单可移动'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+
+    final picked = await showModalBottomSheet<Playlist>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.6,
+          child: Column(children: [
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Text('移动 ${_selected.length} 首到…',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.builder(
+                itemCount: targets.length,
+                itemBuilder: (context, i) {
+                  final p = targets[i];
+                  return ListTile(
+                    leading: Icon(
+                      p.system ? Icons.star_outline : Icons.queue_music,
+                      size: 20,
+                    ),
+                    title: Text(p.name),
+                    subtitle: Text(
+                      p.folder == null
+                          ? '${p.entries.length} 首'
+                          : '${p.folder} · ${p.entries.length} 首',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    onTap: () => Navigator.of(context).pop(p),
+                  );
+                },
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+
+    // 用批量移动 API：一次写盘，目标已有同曲则去重跳过
+    final indices = _selected.toSet();
+    final requested = indices.length;
+    final count = service.moveEntries(playlist.id, picked.id, indices);
+    _exitBatch();
+    if (mounted) {
+      final skipped = requested - count;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(skipped > 0
+            ? '已移动 $count 首到「${picked.name}」（$skipped 首已存在，已跳过）'
+            : '已移动 $count 首到「${picked.name}」'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+  }
+
+  Future<void> _rename(
+      BuildContext context, PlaylistService service, Playlist playlist) async {
     final controller = TextEditingController(text: playlist.name);
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('重命名歌单'),
-        content: TextField(controller: controller, autofocus: true),
+        content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: '新名称')),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('取消')),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
-              child: const Text('确定')),
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('保存')),
         ],
       ),
     );
-    if (name != null && name.trim().isNotEmpty) {
-      service.rename(playlist.id, name);
-    }
+    if (name != null && name.isNotEmpty) service.rename(playlist.id, name);
   }
 }
 
-/// 音乐库歌单条（新建 / 导入 M3U / 歌单卡片）。
-/// 歌单区：纵向列表（替代原先的横向滚动条）。
-///
-/// 横向滚动条的问题（用户实测反馈）：歌单超过 4-5 个就找不到，
-/// 必须左右滑且没有搜索。参考栖弦的 playlist_management_page：
-/// 独立管理页 + 纵向 SliverList。
-///
-/// 这里保持"嵌在曲库页里"的形态（不新开页），但改为纵向列表 +
-/// 歌单数超过 6 个时出现搜索框。
 class PlaylistsStrip extends ConsumerStatefulWidget {
   const PlaylistsStrip({super.key});
 

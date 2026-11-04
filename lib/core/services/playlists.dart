@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../storage/settings_store.dart';
+import 'logger.dart';
 import 'safe_notifier.dart';
 
 /// 歌单条目。resolvedPath 非空时直接播放（本地文件 / 直链 URL），
@@ -149,8 +150,58 @@ class PlaylistService extends SafeNotifier {
           if (!p.system) p,
       ];
 
+  /// 兼容旧数据的全局收藏（无文件夹归属）。
   Playlist? get favorites =>
       playlists.where((p) => p.id == favoritesId).firstOrNull;
+
+  /// 某人（某文件夹）自己的「我的收藏」歌单。
+  ///
+  /// 多用户共用场景：每人一个文件夹，文件夹内各有一份「我的收藏」，
+  /// 收藏按钮操作的是"当前文件夹"的那一份。
+  Playlist? favoritesIn(String? folder) => playlists
+      .where((p) =>
+          p.name == '我的收藏' &&
+          (folder == null ? p.folder == null : p.folder == folder))
+      .firstOrNull;
+
+  /// 把已有歌单升级为某个文件夹的「我的收藏」：
+  /// 改名为「我的收藏」、标记 system、归入该文件夹。
+  /// 用于「人名歌单 → 该人的收藏」这种迁移。
+  void markAsSystem(String id, {String? folder}) {
+    playlists = [
+      for (final p in playlists)
+        if (p.id == id)
+          Playlist(
+            id: p.id,
+            name: '我的收藏',
+            createdAtMs: p.createdAtMs,
+            entries: p.entries,
+            system: true,
+            folder: folder ?? p.folder,
+          )
+        else
+          p
+    ];
+    unawaitedPersist();
+  }
+
+  /// 为指定文件夹创建其专属「我的收藏」（幂等）。
+  Playlist ensureFavoritesIn(String? folder) {
+    final existing = favoritesIn(folder);
+    if (existing != null) return existing;
+    final p = Playlist(
+      id: folder == null
+          ? favoritesId
+          : 'fav_${folder.hashCode.toRadixString(16)}_${DateTime.now().microsecondsSinceEpoch}',
+      name: '我的收藏',
+      createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      system: true,
+      folder: folder,
+    );
+    playlists = [...playlists, p];
+    unawaitedPersist();
+    return p;
+  }
 
   Future<void> load() async {
     final m = await _store.load(_file);
@@ -161,9 +212,17 @@ class PlaylistService extends SafeNotifier {
     notifyListeners();
   }
 
-  /// 保证「我的收藏」存在（老用户升级后自动补建）。
+  /// 保证顶层「我的收藏」存在（老用户升级后自动补建）。
+  ///
+  /// 多用户共用场景：收藏可以分散在各文件夹里（每人一份）。
+  /// 只要**任何地方**已存在「我的收藏」，就不再补建全局那份，
+  /// 否则删掉的全局收藏会在下次启动时又冒出来占第一位。
   void _ensureSystemPlaylists() {
-    if (playlists.any((p) => p.id == favoritesId)) return;
+    // 任何位置（顶层或某文件夹）已有「我的收藏」→ 不再补建顶层那份。
+    // 多用户场景的关键：删掉的顶层收藏不能在下次启动复活。
+    if (playlists.any((p) => p.name == '我的收藏')) return;
+
+    // 完全没有收藏 → 补一份顶层收藏，保证有收藏入口（新用户/老用户升级）。
     playlists = [
       Playlist(
         id: favoritesId,
@@ -174,6 +233,40 @@ class PlaylistService extends SafeNotifier {
       ...playlists,
     ];
     unawaitedPersist();
+  }
+
+  /// 收尾清理：已有某文件夹的收藏时，删除顶层全局收藏。
+  ///
+  /// 与 _ensureSystemPlaylists 配套：补建逻辑只在"完全没有收藏"时生效，
+  /// 但迁移过程中会先补建再合并，所以必须再清一次。
+  /// 幂等、每次 load 后调用都安全。
+  void dropTopLevelFavoritesIfFoldered() {
+    final folderedFavs = <Playlist>[
+      for (final p in playlists)
+        if (p.name == '我的收藏' && p.folder != null) p,
+    ];
+    if (folderedFavs.isEmpty) return;
+
+    final topLevelFavs = <Playlist>[
+      for (final p in playlists)
+        if (p.name == '我的收藏' && p.folder == null) p,
+    ];
+
+    for (final g in topLevelFavs) {
+      // 有内容先并入某个文件夹收藏，避免丢歌
+      final movedCount = g.entries.length;
+      if (movedCount > 0) {
+        final target = folderedFavs.first;
+        addEntries(target.id, g.entries);
+        final t = byId(target.id);
+        final allIn = t != null &&
+            g.entries.every((e) => t.entries.any(
+                (x) => x.sourceId == e.sourceId && x.musicId == e.musicId));
+        if (!allIn) continue; // 没搬全就保留，不冒险
+      }
+      delete(g.id);
+      AppLog.i('Migrate', '已清掉顶层收藏（$movedCount 首已转移到文件夹收藏）');
+    }
   }
 
   Future<void> _persist() async {
@@ -278,30 +371,41 @@ class PlaylistService extends SafeNotifier {
   }
 
   /// 收藏：有则移出，无则加入「我的收藏」。返回操作后是否在收藏中。
-  bool toggleFavorite(PlaylistEntry entry) {
-    final fav = favorites;
+  /// 收藏/取消收藏。[folder] 指定操作哪一份收藏（null = 顶层/全局收藏）。
+  bool toggleFavorite(PlaylistEntry entry, {String? folder}) {
+    final fav = favoritesIn(folder) ??
+        // 该文件夹还没有收藏歌单时自动建一份
+        ensureFavoritesIn(folder);
     final key = '${entry.sourceId}/${entry.musicId}';
-    final existing = fav?.entries
-            .indexWhere((e) => '${e.sourceId}/${e.musicId}' == key) ??
-        -1;
+    final existing =
+        fav.entries.indexWhere((e) => '${e.sourceId}/${e.musicId}' == key);
     if (existing >= 0) {
-      removeEntry(favoritesId, existing);
+      removeEntry(fav.id, existing);
       return false;
     }
-    addEntries(favoritesId, [entry]);
+    addEntries(fav.id, [entry]);
     return true;
   }
 
-  bool isFavorite(String sourceId, String musicId) {
+  /// 是否已收藏（任一文件夹的收藏里存在即视为已收藏，用于按钮状态）。
+  bool isFavorite(String sourceId, String musicId, {String? folder}) {
     final key = '$sourceId/$musicId';
-    return favorites?.entries
-            .any((e) => '${e.sourceId}/${e.musicId}' == key) ??
-        false;
+    if (folder != null) {
+      return favoritesIn(folder)
+              ?.entries
+              .any((e) => '${e.sourceId}/${e.musicId}' == key) ??
+          false;
+    }
+    // folder == null：检查所有收藏歌单（含各用户的）
+    return playlists
+        .where((p) => p.name == '我的收藏')
+        .any((p) => p.entries.any((e) => '${e.sourceId}/${e.musicId}' == key));
   }
 
   /// 把旧 favorites.json 的条目一次性并入「我的收藏」（迁移用，按 key 去重）。
-  Future<int> mergeIntoFavorites(List<PlaylistEntry> entries) async {
-    final fav = favorites;
+  Future<int> mergeIntoFavorites(List<PlaylistEntry> entries,
+      {String? folder}) async {
+    final fav = favoritesIn(folder);
     if (fav == null) return 0;
     final existing = {
       for (final e in fav.entries) '${e.sourceId}/${e.musicId}',
@@ -311,7 +415,7 @@ class PlaylistService extends SafeNotifier {
         if (existing.add('${e.sourceId}/${e.musicId}')) e,
     ];
     if (fresh.isEmpty) return 0;
-    addEntries(favoritesId, fresh);
+    addEntries(fav.id, fresh);
     return fresh.length;
   }
 
@@ -319,11 +423,73 @@ class PlaylistService extends SafeNotifier {
     playlists = [
       for (final p in playlists)
         if (p.id == id)
-          p.copyWith(entries: [...p.entries, ...entries])
+          p.copyWith(entries: _appendUnique(p.entries, entries))
         else
           p
     ];
     unawaitedPersist();
+  }
+
+  /// 追加条目并去重：同一 sourceId+musicId 视为同一首歌（真重复），
+  /// 已存在则跳过，避免同一歌单里出现两条相同曲目。
+  static List<PlaylistEntry> _appendUnique(
+      List<PlaylistEntry> base, List<PlaylistEntry> add) {
+    final seen = {for (final e in base) '${e.sourceId}/${e.musicId}'};
+    final out = [...base];
+    for (final e in add) {
+      if (e.musicId.isEmpty) continue;
+      if (seen.add('${e.sourceId}/${e.musicId}')) out.add(e);
+    }
+    return out;
+  }
+
+  /// 批量移除指定索引（一次写盘，避免 N 次 IO）。
+  void removeEntries(String id, Set<int> indices) {
+    if (indices.isEmpty) return;
+    playlists = [
+      for (final p in playlists)
+        if (p.id == id)
+          p.copyWith(entries: [
+            for (var i = 0; i < p.entries.length; i++)
+              if (!indices.contains(i)) p.entries[i],
+          ])
+        else
+          p
+    ];
+    unawaitedPersist();
+  }
+
+  /// 批量移动到另一歌单：一次写盘，保证两端一致。
+  /// 返回实际移动条数（目标已有同曲则跳过，不产生重复）。
+  int moveEntries(String fromId, String toId, Set<int> indices) {
+    if (indices.isEmpty || fromId == toId) return 0;
+    final from = byId(fromId);
+    final to = byId(toId);
+    if (from == null || to == null) return 0;
+
+    final moving = <PlaylistEntry>[
+      for (var i = 0; i < from.entries.length; i++)
+        if (indices.contains(i)) from.entries[i],
+    ];
+    if (moving.isEmpty) return 0;
+
+    final merged = _appendUnique(to.entries, moving);
+    final addedCount = merged.length - to.entries.length;
+
+    playlists = [
+      for (final p in playlists)
+        if (p.id == fromId)
+          p.copyWith(entries: [
+            for (var i = 0; i < p.entries.length; i++)
+              if (!indices.contains(i)) p.entries[i],
+          ])
+        else if (p.id == toId)
+          p.copyWith(entries: merged)
+        else
+          p
+    ];
+    unawaitedPersist();
+    return addedCount;
   }
 
   void removeEntry(String id, int index) {
