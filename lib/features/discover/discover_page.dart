@@ -2,10 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app_providers.dart';
-import '../../../core/ui/cover_image.dart';
 import '../../../core/models/music.dart';
 import '../../../player/player_core.dart';
-import '../library/playlist_pages.dart';
 import '../player/player_page.dart';
 import 'board_songs_page.dart';
 
@@ -46,24 +44,8 @@ class DiscoverPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final core = ref.watch(playerCoreProvider);
-    final playlists = ref.watch(playlistsProvider).sorted;
-    // 「继续聆听」用真实播放历史（之前只显示当前一首，形同虚设）
-    final history = ref.watch(playHistoryProvider).items;
-    final recent = [
-      for (final h in history.take(10))
-        PlayerItem(
-          title: h.title,
-          artist: h.artist,
-          sourceId: h.sourceId,
-          musicId: h.musicId,
-          album: h.album,
-          artUri: (h.picUrl == null || h.picUrl!.isEmpty)
-              ? null
-              : Uri.tryParse(h.picUrl!),
-          duration:
-              h.durationMs == null ? null : Duration(milliseconds: h.durationMs!),
-        ),
-    ];
+
+
 
     return Scaffold(
       appBar: AppBar(title: const Text('发现')),
@@ -178,65 +160,9 @@ class DiscoverPage extends ConsumerWidget {
               ]);
             },
           ),
-        // —— 我的歌单 ——
-        // 「收藏」概念已移除（对齐 lx / 栖弦：只有歌单）。这里展示歌单入口，
-        // 系统歌单（原收藏）仍是其中之一，但不再用爱心图标表达。
-        if (playlists.isNotEmpty) ...[
-          const _SectionHeader('我的歌单'),
-          for (final p in playlists.take(3))
-            ListTile(
-              leading: CoverImage(
-                url: p.entries.isNotEmpty ? p.entries.first.picUrl : null,
-                size: 44,
-                icon: Icons.queue_music,
-              ),
-              title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text('${p.entries.length} 首'),
-              trailing: Icon(Icons.chevron_right,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => PlaylistDetailPage(playlistId: p.id))),
-            ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () {
-                  // 音乐库 Tab 里有完整歌单管理
-                  Navigator.of(context).maybePop();
-                },
-                child: const Text('全部歌单 ›', style: TextStyle(fontSize: 12)),
-              ),
-            ),
-          ),
-        ],
-        // —— 继续聆听 ——
-        if (recent.isNotEmpty) ...[
-          const _SectionHeader('继续聆听'),
-          SizedBox(
-            height: 148,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              itemCount: recent.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
-              itemBuilder: (context, i) {
-                final item = recent[i];
-                return _RecentCard(
-                  title: item.title,
-                  artist: item.artist,
-                  onTap: () {
-                    core.setQueue(recent, index: i);
-                    Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => const PlayerPage()));
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+        // 注：「我的歌单」与「继续聆听」已移到「曲库」Tab。
+        // 发现页职责 = 纯推荐（每日推荐 / 排行榜 / 今日热门），
+        // 避免推荐流里混入"我自己的内容"。
         const SizedBox(height: 24),
       ]),
     );
@@ -385,51 +311,4 @@ class _HotSongsSection extends ConsumerWidget {
   }
 }
 
-class _RecentCard extends StatelessWidget {
-  const _RecentCard(
-      {required this.title, required this.artist, required this.onTap});
-  final String title;
-  final String artist;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 132,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            width: double.infinity,
-            height: 64,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              gradient: const LinearGradient(
-                colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6)],
-              ),
-            ),
-            child: const Icon(Icons.music_note, color: Colors.white),
-          ),
-          const SizedBox(height: 6),
-          Text(title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13)),
-          Text(artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: scheme.onSurfaceVariant, fontSize: 11)),
-        ]),
-      ),
-    );
-  }
-}
 

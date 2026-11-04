@@ -5,6 +5,11 @@ import '../library/library_page.dart';
 import '../mine/mine_page.dart';
 import '../search/search_page.dart';
 
+/// 三个 Tab 的职责边界（对齐栖弦：发现/曲库/我的）：
+///   发现 = 纯推荐（每日推荐 / 排行榜 / 今日热门）——别人给我看的内容
+///   曲库 = 我的东西（我的歌单 / 继续聆听 / 本机歌曲）——我收藏的内容
+///   我的 = 设置与配置（音源 / 下载 / WebDAV / 最近播放管理）
+///
 /// 响应式断点（规格 §12）：
 ///   < 600dp  单列 + 底部导航（手机）
 ///   600–900  仍用底部导航（平板竖屏）
@@ -34,7 +39,7 @@ class _HomeShellState extends State<HomeShell> {
     NavigationRailDestination(
       icon: Icon(Icons.library_music_outlined),
       selectedIcon: Icon(Icons.library_music),
-      label: Text('音乐库'),
+      label: Text('曲库'),
     ),
     NavigationRailDestination(
       icon: Icon(Icons.person_outline),
@@ -63,7 +68,7 @@ class _HomeShellState extends State<HomeShell> {
               destinations: const [
                 NavigationDestination(icon: Icon(Icons.explore), label: '发现'),
                 NavigationDestination(
-                    icon: Icon(Icons.library_music), label: '音乐库'),
+                    icon: Icon(Icons.library_music), label: '曲库'),
                 NavigationDestination(icon: Icon(Icons.person), label: '我的'),
               ],
             ),

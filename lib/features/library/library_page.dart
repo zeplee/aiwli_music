@@ -415,6 +415,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
 
     final visible = _visible;
     final core = ref.watch(playerCoreProvider);
+    final recent = ref.watch(playHistoryProvider).items.take(10).toList();
     final current = core.current;
 
     return RefreshIndicator(
@@ -430,6 +431,56 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                 child: PlaylistsStrip(),
               ),
+              // 「继续聆听」：最近播放的横向快捷卡片
+              // （从发现页搬来——曲库才是"我的东西"的家）
+              if (recent.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('继续聆听',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
+                  ),
+                ),
+                SizedBox(
+                  height: 148,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: recent.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 12),
+                    itemBuilder: (context, i) {
+                      final h = recent[i];
+                      return _RecentCard(
+                        title: h.title,
+                        artist: h.artist,
+                        onTap: () {
+                          final items = [
+                            for (final x in recent)
+                              PlayerItem(
+                                title: x.title,
+                                artist: x.artist,
+                                sourceId: x.sourceId,
+                                musicId: x.musicId,
+                                album: x.album,
+                                artUri: (x.picUrl == null || x.picUrl!.isEmpty)
+                                    ? null
+                                    : Uri.tryParse(x.picUrl!),
+                                duration: x.durationMs == null
+                                    ? null
+                                    : Duration(milliseconds: x.durationMs!),
+                              ),
+                          ];
+                          ref.read(playerCoreProvider).setQueue(items, index: i);
+                          Navigator.of(context).push(MaterialPageRoute<void>(
+                              builder: (_) => const PlayerPage()));
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
                 child: Row(children: [
@@ -541,3 +592,52 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     return '$m:$sec';
   }
 }
+
+class _RecentCard extends StatelessWidget {
+  const _RecentCard(
+      {required this.title, required this.artist, required this.onTap});
+  final String title;
+  final String artist;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        width: 132,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            width: double.infinity,
+            height: 64,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              gradient: const LinearGradient(
+                colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6)],
+              ),
+            ),
+            child: const Icon(Icons.music_note, color: Colors.white),
+          ),
+          const SizedBox(height: 6),
+          Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13)),
+          Text(artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  color: scheme.onSurfaceVariant, fontSize: 11)),
+        ]),
+      ),
+    );
+  }
+}
+

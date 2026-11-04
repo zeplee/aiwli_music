@@ -12,9 +12,9 @@ void main() {
       child: const AiwliApp(),
     ));
     await tester.pump(const Duration(milliseconds: 300));
-    // 三 Tab 壳（发现/音乐库/我的）+ 发现页顶栏
+    // 三 Tab 壳（发现/曲库/我的）+ 发现页顶栏
     expect(find.text('发现'), findsWidgets);
-    expect(find.text('音乐库'), findsOneWidget);
+    expect(find.text('曲库'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
   });
 }
