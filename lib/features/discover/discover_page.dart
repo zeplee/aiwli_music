@@ -9,10 +9,31 @@ import 'board_songs_page.dart';
 
 /// 发现页：顶部搜索 → 每日推荐 Hero → 排行榜横滑（脚本能力驱动）→
 /// 今日热门（飙升榜）→ 继续聆听 → 快速播放 → 音源状态。
-class DiscoverPage extends ConsumerWidget {
+class DiscoverPage extends ConsumerStatefulWidget {
   const DiscoverPage({this.onOpenSearch, super.key});
 
   final VoidCallback? onOpenSearch;
+
+  @override
+  ConsumerState<DiscoverPage> createState() => _DiscoverPageState();
+}
+
+class _DiscoverPageState extends ConsumerState<DiscoverPage> {
+  /// 发现页当前查看的音源。
+  /// 榜单只由 lx 脚本提供（内置五平台 SDK 都没有榜单接口），
+  /// 所以按"已安装的源"切换——对齐 lx 的 base-selection
+  /// 与栖弦的 DiscoverySourceSelector。
+  String? _selectedSourceId;
+
+  /// 当前生效的源：优先用户选择，否则回落活跃源。
+  String? _effectiveSourceId() {
+    final reg = ref.watch(sourceRegistryProvider);
+    if (_selectedSourceId != null &&
+        reg.installed.any((s) => s.id == _selectedSourceId)) {
+      return _selectedSourceId;
+    }
+    return reg.activeId;
+  }
 
   static const List<PlayerItem> _demo = [
     PlayerItem(
@@ -42,7 +63,7 @@ class DiscoverPage extends ConsumerWidget {
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
 
 
@@ -56,7 +77,7 @@ class DiscoverPage extends ConsumerWidget {
           child: InkWell(
             key: const ValueKey('discover_search_bar'),
             borderRadius: BorderRadius.circular(12),
-            onTap: onOpenSearch,
+            onTap: widget.onOpenSearch,
             child: Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -81,6 +102,12 @@ class DiscoverPage extends ConsumerWidget {
             ),
           ),
         ),
+        // —— 音源切换（榜单由脚本提供，多源时可切）——
+        if ((ref.watch(sourceRegistryProvider).installed.where((s) => s.enabled).length) > 1)
+          _SourceSelector(
+            selectedId: _effectiveSourceId(),
+            onSelect: (id) => setState(() => _selectedSourceId = id),
+          ),
         // —— 每日推荐 Hero ——
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
@@ -93,9 +120,11 @@ class DiscoverPage extends ConsumerWidget {
             },
           ),
         ),
-        // —— 排行榜（脚本驱动：导入的音源声明 boardList/boardSongs 才显示，零内置源）——
+        // —— 排行榜（脚本驱动：导入的音源声明 boardList/boardSongs 才显示）——
+        // key 绑定源 id：切换音源时重建 FutureBuilder，重新拉取该源的榜单
         if (ref.watch(sourceRegistryProvider).activeRuntime != null)
           FutureBuilder<List<MusicBoard>>(
+            key: ValueKey('boards_${_effectiveSourceId()}'),
             future: ref
                 .read(sourceRegistryProvider)
                 .activeRuntime!
@@ -311,4 +340,64 @@ class _HotSongsSection extends ConsumerWidget {
   }
 }
 
+/// 音源分段选择器（对齐栖弦 DiscoverySourceSelector 的胶囊样式）。
+/// 横向可滚动，左侧滑块跟随选中项；源多时不挤压布局。
+class _SourceSelector extends ConsumerWidget {
+  const _SourceSelector({required this.selectedId, required this.onSelect});
+  final String? selectedId;
+  final ValueChanged<String> onSelect;
 
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    final installed = ref
+        .watch(sourceRegistryProvider)
+        .installed
+        .where((s) => s.enabled)
+        .toList();
+    if (installed.length < 2) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 42,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        itemCount: installed.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final s = installed[i];
+          final active = s.id == selectedId;
+          return InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => onSelect(s.id),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: active
+                    ? scheme.secondaryContainer
+                    : scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: active
+                      ? scheme.secondary.withValues(alpha: 0.5)
+                      : Colors.transparent,
+                ),
+              ),
+              child: Text(
+                s.name,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                  color: active
+                      ? scheme.onSecondaryContainer
+                      : scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}

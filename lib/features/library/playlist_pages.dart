@@ -154,80 +154,154 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
 }
 
 /// 音乐库歌单条（新建 / 导入 M3U / 歌单卡片）。
-class PlaylistsStrip extends ConsumerWidget {
+/// 歌单区：纵向列表（替代原先的横向滚动条）。
+///
+/// 横向滚动条的问题（用户实测反馈）：歌单超过 4-5 个就找不到，
+/// 必须左右滑且没有搜索。参考栖弦的 playlist_management_page：
+/// 独立管理页 + 纵向 SliverList。
+///
+/// 这里保持"嵌在曲库页里"的形态（不新开页），但改为纵向列表 +
+/// 歌单数超过 6 个时出现搜索框。
+class PlaylistsStrip extends ConsumerStatefulWidget {
   const PlaylistsStrip({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PlaylistsStrip> createState() => _PlaylistsStripState();
+}
+
+class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
+  String _query = '';
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final service = ref.watch(playlistsProvider);
     final scheme = Theme.of(context).colorScheme;
+
+    final sorted = service.sorted;
+    final q = _query.trim().toLowerCase();
+    final visible = q.isEmpty
+        ? sorted
+        : [
+            for (final p in sorted)
+              if (p.name.toLowerCase().contains(q)) p,
+          ];
+
+    // 超过 6 个才显示搜索框（少量歌单时没必要占地方）
+    final showSearch = sorted.length > 6;
+    // 默认最多显示 6 条，避免歌单多时把本机歌曲挤到很下面
+    const collapsedCount = 6;
+    final needCollapse = visible.length > collapsedCount;
+    final shown = _expanded || q.isNotEmpty
+        ? visible
+        : visible.take(collapsedCount).toList();
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Text('歌单',
-            style: Theme.of(context)
-                .textTheme
-                .titleSmall
-                ?.copyWith(fontWeight: FontWeight.bold)),
-        const Spacer(),
-        TextButton.icon(
-          onPressed: () => _importPlaylistFile(context, ref),
-          icon: const Icon(Icons.upload_file, size: 18),
-          label: const Text('导入歌单', style: TextStyle(fontSize: 12)),
-        ),
-        TextButton.icon(
-          onPressed: () => _create(context, ref),
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('新建', style: TextStyle(fontSize: 12)),
-        ),
-      ]),
-      SizedBox(
-        height: 96,
-        child: service.playlists.isEmpty
-            ? Align(
-                alignment: Alignment.centerLeft,
-                child: Text('还没有歌单，新建一个或导入 M3U',
-                    style: TextStyle(
-                        color: scheme.onSurfaceVariant, fontSize: 12)))
-            : ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: service.playlists.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 10),
-                itemBuilder: (context, i) {
-                  final p = service.playlists[i];
-                  return InkWell(
-                    borderRadius: BorderRadius.circular(14),
-                    onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                            builder: (_) =>
-                                PlaylistDetailPage(playlistId: p.id))),
-                    child: Container(
-                      width: 132,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        color: scheme.surfaceContainerHighest,
-                      ),
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Icon(Icons.queue_music),
-                            Text(p.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13)),
-                            Text('${p.entries.length} 首',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: scheme.onSurfaceVariant)),
-                          ]),
-                    ),
-                  );
-                },
-              ),
+      // —— 标题栏：歌单数 + 导入/新建 ——
+      Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(children: [
+          Text('歌单',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 6),
+          Text('${sorted.length}',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          const Spacer(),
+          IconButton(
+            tooltip: '导入歌单',
+            onPressed: () => _importPlaylistFile(context, ref),
+            icon: const Icon(Icons.upload_file, size: 18),
+            visualDensity: VisualDensity.compact,
+          ),
+          IconButton(
+            tooltip: '新建歌单',
+            onPressed: () => _create(context, ref),
+            icon: const Icon(Icons.add, size: 20),
+            visualDensity: VisualDensity.compact,
+          ),
+        ]),
       ),
+
+      // —— 搜索（歌单多时出现）——
+      if (showSearch)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: TextField(
+            decoration: InputDecoration(
+              hintText: '搜索歌单',
+              prefixIcon: const Icon(Icons.search, size: 18),
+              isDense: true,
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            style: const TextStyle(fontSize: 13),
+            onChanged: (v) => setState(() => _query = v),
+          ),
+        ),
+
+      if (sorted.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text('还没有歌单，新建一个或导入 M3U',
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12)),
+        )
+      else ...[
+        // —— 纵向列表 ——
+        for (final p in shown)
+          SizedBox(
+            // ListTile 在无约束 Column 里会反复触发布局：
+            // 显式高度锁死（dense ListTile 的标准高度 56）
+            height: 56,
+            child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            // 性能：12 个歌单各下一张网络封面会让首帧掉到秒级
+            // （实测 850ms/帧）。歌单条目用图标占位即可，不逐条拉图。
+            leading: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: scheme.surfaceContainerHighest,
+              ),
+              child: Icon(
+                p.system ? Icons.star_outline : Icons.queue_music,
+                size: 20,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            title: Text(p.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14)),
+            subtitle: Text('${p.entries.length} 首',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+            trailing: Icon(Icons.chevron_right,
+                size: 18, color: scheme.onSurfaceVariant),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => PlaylistDetailPage(playlistId: p.id))),
+          ),
+          ),
+
+        // —— 展开/收起 ——
+        if (needCollapse)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              child: Text(
+                _expanded ? '收起' : '显示全部 ${visible.length} 个歌单',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+      ],
     ]);
   }
 
@@ -254,8 +328,6 @@ class PlaylistsStrip extends ConsumerWidget {
     }
   }
 
-  /// 导入歌单文件：自动识别 M3U / 文本歌单（每行“歌手 - 标题”，lx 风格）。
-  /// 文本条目在音源支持 musicSearch 时自动匹配。
   Future<void> _importPlaylistFile(BuildContext context, WidgetRef ref) async {
     const groups = [
       XTypeGroup(
@@ -391,7 +463,6 @@ class PlaylistsStrip extends ConsumerWidget {
   }
 }
 
-/// 长按歌曲加入歌单（底部弹层）。
 Future<void> showAddToPlaylistSheet(
     BuildContext context, WidgetRef ref, PlaylistEntry entry) {
   final service = ref.read(playlistsProvider);
