@@ -31,10 +31,18 @@ class DownloadsPage extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                          '${t.status} · ${_fmtMb(t.received)}${t.total > 0 ? ' / ${_fmtMb(t.total)}' : ''}',
+                          '${t.status} · ${_fmtMb(t.received)}'
+                          '${t.total > 0 ? ' / ${_fmtMb(t.total)}' : ''}'
+                          '${t.status == '下载中' && t.total > 0 ? '  ${(progress * 100).toStringAsFixed(0)}%' : ''}',
                           style: const TextStyle(fontSize: 12)),
                       if (t.status == '下载中')
-                        LinearProgressIndicator(value: progress),
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: LinearProgressIndicator(
+                              // 服务端没给 Content-Length 时用不确定进度条
+                              value: t.total > 0 ? progress : null,
+                              minHeight: 3),
+                        ),
                     ],
                   ),
                 );

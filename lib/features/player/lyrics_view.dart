@@ -115,13 +115,34 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
             ),
           );
         }
-        // 非紧凑模式（播放页歌词 Tab）：完整滚动列表，当前行居中高亮
-        return _FullLyricsList(
-          doc: doc,
-          parser: parser,
-          position: s.position,
-          translation: lyric.current.translation,
-          roman: lyric.current.roman,
+        // 非紧凑模式（播放页歌词 Tab）：完整滚动列表 + 翻译/罗马音开关
+        final settings = ref.watch(appSettingsProvider);
+        return Column(
+          children: [
+            _LyricAuxBar(
+              hasTranslation: lyric.current.hasTranslation,
+              hasRoman: lyric.current.hasRoman,
+              showTranslation: settings.lyricTranslation,
+              showRoman: settings.lyricRoman,
+              onToggleTranslation: () => ref
+                  .read(appSettingsProvider)
+                  .setLyricPrefs(translation: !settings.lyricTranslation),
+              onToggleRoman: () => ref
+                  .read(appSettingsProvider)
+                  .setLyricPrefs(roman: !settings.lyricRoman),
+            ),
+            Expanded(
+              child: _FullLyricsList(
+                doc: doc,
+                parser: parser,
+                position: s.position,
+                translation: lyric.current.translation,
+                roman: lyric.current.roman,
+                showTranslation: settings.lyricTranslation,
+                showRoman: settings.lyricRoman,
+              ),
+            ),
+          ],
         );
       },
     );
@@ -364,12 +385,16 @@ class _FullLyricsList extends StatefulWidget {
     required this.position,
     this.translation,
     this.roman,
+    this.showTranslation = true,
+    this.showRoman = true,
   });
   final LyricDocument doc;
   final LrcParser parser;
   final Duration position;
   final LyricDocument? translation;
   final LyricDocument? roman;
+  final bool showTranslation;
+  final bool showRoman;
 
   @override
   State<_FullLyricsList> createState() => _FullLyricsListState();
@@ -420,8 +445,8 @@ class _FullLyricsListState extends State<_FullLyricsList> {
       itemCount: widget.doc.lines.length,
       itemBuilder: (context, i) {
         final active = i == idx;
-        final tr = _auxText(widget.translation, i);
-        final ro = _auxText(widget.roman, i);
+        final tr = widget.showTranslation ? _auxText(widget.translation, i) : null;
+        final ro = widget.showRoman ? _auxText(widget.roman, i) : null;
         return Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -459,6 +484,75 @@ class _FullLyricsListState extends State<_FullLyricsList> {
           ),
         );
       },
+    );
+  }
+}
+
+/// 歌词页顶部小工具条：只在源提供译文/罗马音时才显示对应开关，
+/// 全无时整条隐藏（不占视觉空间）。
+class _LyricAuxBar extends StatelessWidget {
+  const _LyricAuxBar({
+    required this.hasTranslation,
+    required this.hasRoman,
+    required this.showTranslation,
+    required this.showRoman,
+    required this.onToggleTranslation,
+    required this.onToggleRoman,
+  });
+  final bool hasTranslation;
+  final bool hasRoman;
+  final bool showTranslation;
+  final bool showRoman;
+  final VoidCallback onToggleTranslation;
+  final VoidCallback onToggleRoman;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!hasTranslation && !hasRoman) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
+    Widget pill({
+      required String label,
+      required bool on,
+      required VoidCallback onTap,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+            decoration: BoxDecoration(
+              color: on ? scheme.primary.withValues(alpha: 0.18) : null,
+              border: Border.all(
+                  color: on
+                      ? scheme.primary.withValues(alpha: 0.55)
+                      : scheme.outlineVariant),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    fontSize: 12,
+                    color: on ? scheme.primary : scheme.onSurfaceVariant)),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 20, top: 4, bottom: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          if (hasTranslation)
+            pill(
+                label: '翻译',
+                on: showTranslation,
+                onTap: onToggleTranslation),
+          if (hasRoman)
+            pill(label: '罗马音', on: showRoman, onTap: onToggleRoman),
+        ],
+      ),
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'audio_engine.dart';
 import 'audio_focus_policy.dart';
+import 'media_session_cast.dart';
 import 'playback_resolver.dart' show ResolvedPlayback;
 import 'models.dart';
 
@@ -51,7 +52,10 @@ class PlayerCore {
         urlResolver,
     void Function(ResolvedPlayback resolved, Object error)? onSourceUnplayable,
     Future<void> Function(PlayerItem item)? prefetcher,
+    MediaSessionCast? cast,
   }) : _engine = engine,
+        // ignore: prefer_initializing_formals
+        _cast = cast,
         // ignore: prefer_initializing_formals
         _focus = focus,
         // ignore: prefer_initializing_formals
@@ -62,9 +66,12 @@ class PlayerCore {
         _prefetcher = prefetcher {
     _engineSub = engine.snapshots.listen(_onEngineSnapshot);
     _focusSub = _focus?.events.listen(_onFocusEvent);
+    _bindCast();
   }
 
   final AudioEngine _engine;
+  final MediaSessionCast? _cast;
+  StreamSubscription<CastCommand>? _castSub;
   final AudioFocusPolicy? _focus;
   final Future<ResolvedPlayback> Function(PlayerItem item, Set<String> excludeSources)?
       _urlResolver;
@@ -123,6 +130,54 @@ class PlayerCore {
       (_index >= 0 && _index < _queue.length) ? _queue[_index] : null;
   int get queueLength => _queue.length;
   int get currentIndex => _index;
+
+
+  /// 把系统媒体广播（锁屏/通知栏/耳机线控）接到播放核心：
+  /// ① 播放状态变化 → 推送给系统（歌名、封面、进度）
+  /// ② 系统控件操作 → 转成 core 的播放/暂停/切歌/拖动
+  void _bindCast() {
+    final cast = _cast;
+    if (cast == null) return;
+    cast.init();
+    _castSub = cast.commands.listen((cmd) {
+      switch (cmd.type) {
+        case CastCommandType.play:
+          play();
+        case CastCommandType.pause:
+          pause();
+        case CastCommandType.next:
+          next();
+        case CastCommandType.previous:
+          previous();
+        case CastCommandType.seek:
+          if (cmd.position != null) seek(cmd.position!);
+        case CastCommandType.setRepeat:
+        case CastCommandType.setShuffle:
+          break; // 由各平台控件自行处理，App 端不反向同步
+      }
+    });
+    state.addListener(_pushToCast);
+    _pushToCast();
+  }
+
+  /// 状态 → 系统媒体中心。只在"曲目变了"或播控变了时推，
+  /// 避免每 200ms 的进度 tick 反复打扰系统（进度由系统侧按 speed 外推）。
+  String? _lastCastKey;
+  void _pushToCast() {
+    final cast = _cast;
+    if (cast == null) return;
+    final s = state.value;
+    final item = current;
+    final key = '${item?.sourceId}/${item?.musicId}|${s.playing}|${s.title}|${s.duration}';
+    if (key == _lastCastKey) return;
+    _lastCastKey = key;
+    if (item != null) cast.updateNowPlaying(item.metadata);
+    cast.updatePlayback(
+      playing: s.playing,
+      position: s.position,
+      duration: s.duration,
+    );
+  }
 
   void _onEngineSnapshot(EngineSnapshot snap) {
     // 陈旧事件守卫：快速切歌时，旧歌的 mpv 异步错误/完成事件会在
@@ -385,5 +440,7 @@ class PlayerCore {
   Future<void> dispose() async {
     await _engineSub?.cancel();
     await _focusSub?.cancel();
+    state.removeListener(_pushToCast);
+    await _castSub?.cancel();
   }
 }

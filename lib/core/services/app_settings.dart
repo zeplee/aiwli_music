@@ -15,6 +15,9 @@ class AppSettings extends SafeNotifier {
 
   Quality quality = Quality.high;
   bool eqEnabled = false;
+  /// 歌词翻译 / 罗马音显示开关（网易源提供时才有意义）。
+  bool lyricTranslation = true;
+  bool lyricRoman = true;
   List<double> eqGains = List.filled(eqBandHz.length, 0);
   String eqPreset = 'flat';
 
@@ -25,6 +28,9 @@ class AppSettings extends SafeNotifier {
       if (v.name == q) quality = v;
     }
     eqEnabled = m['eqEnabled'] == true;
+    sleepTimerMinutes = (m['sleepTimerMinutes'] as num?)?.toInt() ?? 30;
+    lyricTranslation = m['lyricTranslation'] != false;
+    lyricRoman = m['lyricRoman'] != false;
     eqPreset = m['eqPreset'] as String? ?? 'flat';
     final g = m['eqGains'] as List?;
     if (g != null && g.length == eqBandHz.length) {
@@ -33,16 +39,38 @@ class AppSettings extends SafeNotifier {
     notifyListeners();
   }
 
+  /// 一次性把全部设置落盘（任何单项变更都走这里，避免漏字段）。
+  Future<void> _flush() => _store.flush(_file, {
+        'quality': quality.name,
+        'eqEnabled': eqEnabled,
+        'eqPreset': eqPreset,
+        'eqGains': eqGains,
+        'lyricTranslation': lyricTranslation,
+        'lyricRoman': lyricRoman,
+        'sleepTimerMinutes': sleepTimerMinutes,
+      });
+
+  Future<void> setLyricPrefs({bool? translation, bool? roman}) async {
+    if (translation != null) lyricTranslation = translation;
+    if (roman != null) lyricRoman = roman;
+    notifyListeners();
+    await _flush();
+  }
+
+  /// 睡眠定时默认时长（分钟），0 表示不记忆。
+  int sleepTimerMinutes = 30;
+
+  Future<void> setSleepTimerMinutes(int v) async {
+    sleepTimerMinutes = v;
+    notifyListeners();
+    await _flush();
+  }
+
   Future<void> setQuality(Quality q) async {
     if (q == quality) return;
     quality = q;
     notifyListeners();
-    await _store.flush(_file, {
-      'quality': quality.name,
-      'eqEnabled': eqEnabled,
-      'eqPreset': eqPreset,
-      'eqGains': eqGains,
-    });
+    await _flush();
   }
 
   Future<void> setEq({bool? enabled, List<double>? gains, String? preset}) async {
@@ -50,11 +78,6 @@ class AppSettings extends SafeNotifier {
     if (gains != null && gains.length == eqBandHz.length) eqGains = gains;
     if (preset != null) eqPreset = preset;
     notifyListeners();
-    await _store.flush(_file, {
-      'quality': quality.name,
-      'eqEnabled': eqEnabled,
-      'eqPreset': eqPreset,
-      'eqGains': eqGains,
-    });
+    await _flush();
   }
 }

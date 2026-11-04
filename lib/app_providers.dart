@@ -19,6 +19,7 @@ import 'package:flutter_media_store/flutter_media_store.dart';
 import 'core/storage/settings_store.dart';
 import 'player/playback_resolver.dart';
 import 'player/player_core.dart';
+import 'platform/platform_cast.dart';
 import 'player/providers.dart';
 import 'sources/builtin/lyric_sdk.dart';
 import 'sources/builtin/comment_sdk.dart';
@@ -99,6 +100,9 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
   final resolver = ref.read(playbackResolverProvider);
   final core = PlayerCore(
     engine: ref.read(engineProvider),
+    // 系统媒体广播（锁屏/通知栏/耳机线控）。原生实现全在插件内，
+    // 各平台分支只在这里选一次（ADR-014）。
+    cast: createCast(),
     focus: ref.read(focusPolicyProvider),
     urlResolver: (item, exclude) => resolveUrl(ref, item, exclude),
     onSourceUnplayable: (resolved, error) {
@@ -339,13 +343,24 @@ class DownloadManager extends SafeNotifier {
       final resp = await dio.get<ResponseBody>(url,
           options: Options(responseType: ResponseType.stream));
       final body = resp.data!;
+      // 服务端给了 Content-Length 才有「总大小」，否则只能显示已下载字节
+      final total = int.tryParse(
+              resp.headers.value(Headers.contentLengthHeader) ?? '') ??
+          0;
+      if (total > 0) {
+        task.total = total;
+      }
       final bytesBuilder = BytesBuilder(copy: false);
+      var lastNotify = 0;
       await for (final chunk in body.stream) {
         bytesBuilder.add(chunk);
-        task
-          ..received = bytesBuilder.length
-          ..total = bytesBuilder.length;
-        notifyListeners();
+        task.received = bytesBuilder.length;
+        // 限频：约 150ms 一次，避免每 8KB 就重建整棵树
+        final now = DateTime.now().millisecondsSinceEpoch;
+        if (now - lastNotify > 150) {
+          lastNotify = now;
+          notifyListeners();
+        }
       }
       final bytes = bytesBuilder.takeBytes();
 
