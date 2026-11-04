@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:on_audio_query_pluse/on_audio_query.dart';
@@ -5,6 +7,7 @@ import 'package:on_audio_query_pluse/on_audio_query.dart';
 import '../../core/services/playlists.dart';
 import '../../player/models.dart';
 import '../../player/player_core.dart';
+import '../../core/ui/cover_image.dart';
 import '../../app_providers.dart';
 import '../player/player_page.dart';
 import 'playlist_pages.dart';
@@ -20,6 +23,10 @@ class LibraryPage extends ConsumerStatefulWidget {
 
 class _LibraryPageState extends ConsumerState<LibraryPage> {
   List<SongModel>? _songs;
+
+  /// albumId → 封面字节缓存。queryArtwork 是平台调用，
+  /// 必须缓存，否则列表滚动会反复解码。
+  final Map<int, Uint8List?> _artCache = {};
   String? _error;
 
   @override
@@ -39,10 +46,40 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
       final songs = await _audioQuery.querySongs();
       if (!mounted) return;
       setState(() => _songs = songs);
+      _loadArtwork(songs);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '扫描失败: $e');
     }
+  }
+
+  /// 按 albumId 批量取专辑封面（同一专辑只取一次）。
+  Future<void> _loadArtwork(List<SongModel> songs) async {
+    final ids = <int>{
+      for (final s in songs)
+        if ((s.albumId ?? 0) > 0) s.albumId!,
+    };
+    for (final id in ids) {
+      if (_artCache.containsKey(id)) continue;
+      _artCache[id] = null; // 占位，避免并发重复请求
+      try {
+        final bytes = await _audioQuery.queryArtwork(
+          id,
+          ArtworkType.ALBUM,
+          size: 300,
+          format: ArtworkFormat.JPEG,
+        );
+        if (!mounted) return;
+        setState(() => _artCache[id] = bytes);
+      } catch (_) {
+        // 无封面属正常，保持 null（走渐变占位）
+      }
+    }
+  }
+
+  Uint8List? _artOf(SongModel s) {
+    final id = s.albumId ?? 0;
+    return id > 0 ? _artCache[id] : null;
   }
 
   void _play(List<PlayerItem> items, int index) {
@@ -120,7 +157,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           ),
         for (var i = 0; i < songs.length; i++)
           ListTile(
-            leading: const _ArtTile(icon: Icons.music_note),
+            leading: CoverImage(
+              bytes: _artOf(songs[i]),
+              size: 44,
+              radius: 6,
+            ),
             title: Text(songs[i].title,
                 maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text(
@@ -138,6 +179,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                     musicId: '${songs[j].id}',
                     resolvedUrl: 'file://${songs[j].data}',
                     duration: Duration(milliseconds: songs[j].duration ?? 0),
+                    artBytes: _artOf(songs[j]),
                   ),
               ];
               _play(items, i);
@@ -156,6 +198,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                     sourceId: 'local',
                     musicId: '${songs[i].id}',
                     resolvedUrl: 'file://${songs[i].data}',
+                    artBytes: _artOf(songs[i]),
                     duration:
                         Duration(milliseconds: songs[i].duration ?? 0),
                   ),
@@ -188,24 +231,3 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   }
 }
 
-class _ArtTile extends StatelessWidget {
-  const _ArtTile({required this.icon});
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 46,
-      height: 46,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6)],
-        ),
-      ),
-      child: Icon(icon, color: Colors.white, size: 22),
-    );
-  }
-}

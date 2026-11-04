@@ -21,6 +21,7 @@ class PlayerItem {
     this.artUri,
     this.duration,
     this.raw,
+    this.artBytes,
   });
   final String title;
   final String artist;
@@ -33,6 +34,10 @@ class PlayerItem {
 
   /// 音源返回的原始对象（MusicFree 插件取链依赖私有字段，需原样透传）。
   final Map<Object?, Object?>? raw;
+
+  /// 本地封面字节（on_audio_query 的 queryArtwork 返回内存图，非 URL）。
+  /// 优先级高于 [artUri]：本地歌曲没有网络封面。
+  final Uint8List? artBytes;
 
   TrackMetadata get metadata => TrackMetadata(
         title: title,
@@ -250,6 +255,7 @@ class PlayerCore {
       playing: snap.playing,
       position: snap.position,
       duration: snap.duration,
+      buffered: snap.buffered,
       // 引擎快照没有错误 = 当前健康；必须清掉旧错误，
       // 否则「播放正常但底部一直红字」。
       error: snap.error,

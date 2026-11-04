@@ -49,6 +49,7 @@ class PlayerUiState {
     this.repeatMode = RepeatMode.off,
     this.shuffleOn = false,
     this.speed = 1.0,
+    this.buffered = Duration.zero,
   });
   final EngineProcessing processing;
   final bool playing;
@@ -60,6 +61,9 @@ class PlayerUiState {
   final RepeatMode repeatMode;
   final bool shuffleOn;
   final double speed;
+
+  /// 已缓冲到的位置（进度条浅色叠加用）。
+  final Duration buffered;
 
   PlayerUiState copyWith({
     EngineProcessing? processing,
@@ -75,6 +79,7 @@ class PlayerUiState {
     RepeatMode? repeatMode,
     bool? shuffleOn,
     double? speed,
+    Duration? buffered,
   }) {
     return PlayerUiState(
       processing: processing ?? this.processing,
@@ -87,6 +92,7 @@ class PlayerUiState {
       repeatMode: repeatMode ?? this.repeatMode,
       shuffleOn: shuffleOn ?? this.shuffleOn,
       speed: speed ?? this.speed,
+      buffered: buffered ?? this.buffered,
     );
   }
 }

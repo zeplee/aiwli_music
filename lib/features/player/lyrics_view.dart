@@ -153,6 +153,7 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
                 roman: lyric.current.roman,
                 showTranslation: settings.lyricTranslation,
                 showRoman: settings.lyricRoman,
+                onSeek: (pos) => core.seek(pos),
               ),
             ),
           ],
@@ -400,6 +401,7 @@ class _FullLyricsList extends StatefulWidget {
     this.roman,
     this.showTranslation = true,
     this.showRoman = true,
+    this.onSeek,
   });
   final LyricDocument doc;
   final LrcParser parser;
@@ -408,6 +410,9 @@ class _FullLyricsList extends StatefulWidget {
   final LyricDocument? roman;
   final bool showTranslation;
   final bool showRoman;
+
+  /// 点击某一行歌词 → seek 到该行起始时间（规格 §2.1）。
+  final void Function(Duration position)? onSeek;
 
   @override
   State<_FullLyricsList> createState() => _FullLyricsListState();
@@ -460,11 +465,16 @@ class _FullLyricsListState extends State<_FullLyricsList> {
         final active = i == idx;
         final tr = widget.showTranslation ? _auxText(widget.translation, i) : null;
         final ro = widget.showRoman ? _auxText(widget.roman, i) : null;
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              active
+        return InkWell(
+          // 点击任意歌词行 → 跳到该行（非当前行也支持，和主流播放器一致）
+          onTap: widget.onSeek == null
+              ? null
+              : () => widget.onSeek!(widget.doc.lines[i].start),
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                active
                   ? _KaraokeLine(
                       line: widget.doc.lines[i],
                       wordIndex: widget.parser.currentWordIndex(
@@ -481,19 +491,20 @@ class _FullLyricsListState extends State<_FullLyricsList> {
                       textAlign: TextAlign.center,
                       style: TextStyle(
                           color: scheme.onSurfaceVariant, fontSize: 14)),
-              if (i == idx && (tr != null || ro != null))
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Text(
-                    [?tr, ?ro].join('  ·  '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                if (i == idx && (tr != null || ro != null))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      [?tr, ?ro].join('  ·  '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         );
       },

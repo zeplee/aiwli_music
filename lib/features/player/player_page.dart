@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart' hide RepeatMode;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app_providers.dart';
 import '../../core/models/quality.dart';
+import '../../core/ui/cover_palette.dart';
 import '../../player/models.dart';
 import 'lyrics_view.dart';
 import '../../player/player_core.dart';
@@ -23,6 +26,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 上一次已提示过的错误（同一错误不重复弹 SnackBar）。
   Object? _lastShownError;
 
+  /// 当前封面提取出的主色（动态主题）；null 时用主题默认色。
+  Color? _coverColor;
+  String? _paletteKey;
+
+  /// 封面变化时重新取色（用 key 去重，避免每帧重算）。
+  void _syncPalette(String? artUrl) {
+    if (artUrl == _paletteKey) return;
+    _paletteKey = artUrl;
+    if (artUrl == null || artUrl.isEmpty) {
+      if (_coverColor != null) setState(() => _coverColor = null);
+      return;
+    }
+    CoverPalette.extract(artUrl).then((c) {
+      if (!mounted || artUrl != _paletteKey) return;
+      if (c != null) setState(() => _coverColor = c);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
@@ -34,9 +55,30 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final isFav =
         item != null && favorites.isFavorite(item.sourceId, item.musicId);
 
-    return Scaffold(
-      body: SafeArea(
-        child: ValueListenableBuilder<PlayerUiState>(
+    return CallbackShortcuts(
+      bindings: {
+        // Space：播放/暂停
+        const SingleActivator(LogicalKeyboardKey.space): () {
+          final st = core.state.value;
+          st.playing ? core.pause() : core.play();
+        },
+        // ← / →：快退/快进 5s
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): () {
+          final target = core.state.value.position - const Duration(seconds: 5);
+          core.seek(target.isNegative ? Duration.zero : target);
+        },
+        const SingleActivator(LogicalKeyboardKey.arrowRight): () {
+          final cur = core.state.value;
+          final dur = cur.duration ?? Duration.zero;
+          final target = cur.position + const Duration(seconds: 5);
+          core.seek(target > dur ? dur : target);
+        },
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          body: SafeArea(
+            child: ValueListenableBuilder<PlayerUiState>(
           valueListenable: core.state,
           builder: (context, s, _) {
             // 错误改成底部浮层：只在真正失败时弹一次，不占布局高度，
@@ -56,12 +98,26 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   ));
               });
             }
+            // 封面变化 → 重新提取主色（动态主题 + 背景模糊）
+            _syncPalette(item?.artUri?.toString());
+
             final duration =
                 s.duration ?? const Duration(minutes: 3, seconds: 30);
             final pos = s.position <= duration ? s.position : duration;
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(children: [
+            // 动态主题色：取到封面主色就用它，否则回退到主题默认
+            final accent = _coverColor ?? scheme.primary;
+            return Stack(
+              children: [
+                // 封面模糊背景 + 主色渐变（规格 §2.4「播放页背景」）
+                Positioned.fill(
+                  child: _CoverBackdrop(
+                    artUrl: item?.artUri?.toString(),
+                    accent: accent,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(children: [
                 Row(children: [
                   IconButton(
                     onPressed: () => Navigator.of(context).maybePop(),
@@ -175,11 +231,39 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant),
                     maxLines: 1, overflow: TextOverflow.ellipsis),
-                // 上半区三页：封面 / 歌词 / 评论（左右滑动，撑满剩余空间）
-                Expanded(child: _PlayerTabs(item: item)),
+                // 上半区：窄屏=三页滑动；宽屏(>900)=左封面 + 右歌词/评论分栏
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      if (c.maxWidth <= 900) {
+                        return _PlayerTabs(item: item);
+                      }
+                      return Row(
+                        children: [
+                          Expanded(
+                            flex: 4,
+                            child: _WideCoverPane(item: item),
+                          ),
+                          const VerticalDivider(width: 24),
+                          Expanded(
+                            flex: 5,
+                            child: _PlayerTabs(
+                              item: item,
+                              wideMode: true,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
                 _SeekBar(
                   position: pos,
                   duration: duration,
+                  // 缓冲进度来自引擎快照（media_kit buffer 流）
+                  buffered: s.buffered,
+                  enabled: s.processing != EngineProcessing.loading &&
+                      s.processing != EngineProcessing.buffering,
                   onChanged: (v) =>
                       core.seek(Duration(milliseconds: v.round())),
                 ),
@@ -255,10 +339,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                       : null,
                 ),
                 const SizedBox(height: 4),
-              ]),
+                  ]),
+                ),
+              ],
             );
           },
         ),
+      ),
+      ),
       ),
     );
   }
@@ -304,12 +392,17 @@ class _PlayPauseButton extends ConsumerWidget {
 }
 
 class _SeekBar extends StatefulWidget {
-  const _SeekBar(
-      {required this.position,
-      required this.duration,
-      required this.onChanged});
+  const _SeekBar({
+    required this.position,
+    required this.duration,
+    required this.onChanged,
+    this.buffered = Duration.zero,
+    this.enabled = true,
+  });
   final Duration position;
   final Duration duration;
+  final Duration buffered;
+  final bool enabled;
   final ValueChanged<double> onChanged;
 
   @override
@@ -321,25 +414,91 @@ class _SeekBarState extends State<_SeekBar> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final max = widget.duration.inMilliseconds.toDouble();
     final value = _dragValue ?? widget.position.inMilliseconds.toDouble();
-    return Slider(
-      value: value.clamp(0, max),
-      max: max <= 0 ? 1 : max,
-      onChanged: (v) => setState(() => _dragValue = v),
-      onChangeEnd: (v) {
-        widget.onChanged(v);
-        _dragValue = null;
-      },
+    final bufferedRatio = max <= 0
+        ? 0.0
+        : (widget.buffered.inMilliseconds / max).clamp(0.0, 1.0);
+    final dragging = _dragValue != null;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 拖动时的时间气泡：拖动过程只更新预览，松手才真正 seek
+        SizedBox(
+          height: 20,
+          child: dragging
+              ? Center(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      _fmt(Duration(milliseconds: _dragValue!.round())),
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: scheme.onPrimaryContainer),
+                    ),
+                  ),
+                )
+              : null,
+        ),
+        Stack(
+          alignment: Alignment.center,
+          children: [
+            // 缓冲进度：已缓冲但未播放的部分用浅色叠加
+            if (bufferedRatio > 0.001)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(2),
+                  child: LinearProgressIndicator(
+                    value: bufferedRatio,
+                    minHeight: 3,
+                    backgroundColor: Colors.transparent,
+                    valueColor: AlwaysStoppedAnimation(
+                        scheme.onSurface.withValues(alpha: 0.22)),
+                  ),
+                ),
+              ),
+            Slider(
+              value: value.clamp(0, max <= 0 ? 1 : max),
+              max: max <= 0 ? 1 : max,
+              // 加载中禁用拖动（规格 §2.2）
+              onChanged: widget.enabled && max > 0
+                  ? (v) => setState(() => _dragValue = v)
+                  : null,
+              onChangeEnd: (v) {
+                widget.onChanged(v);
+                setState(() => _dragValue = null);
+              },
+            ),
+          ],
+        ),
+      ],
     );
+  }
+
+  static String _fmt(Duration d) {
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 }
 
 /// 播放页上半区：封面 / 歌词 / 评论，左右滑动切换（PageView），
 /// 页面指示点同步高亮；底部操作区不受影响。
 class _PlayerTabs extends ConsumerStatefulWidget {
-  const _PlayerTabs({required this.item});
+  const _PlayerTabs({required this.item, this.wideMode = false});
   final PlayerItem? item;
+
+  /// 宽屏模式：封面已由左侧栏独立展示，这里只保留 歌词 / 评论 两页。
+  final bool wideMode;
 
   @override
   ConsumerState<_PlayerTabs> createState() => _PlayerTabsState();
@@ -358,26 +517,35 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final pages = widget.wideMode
+        ? <Widget>[
+            const ClipRRect(
+              borderRadius: BorderRadius.all(Radius.circular(20)),
+              child: LyricsPanel(compact: false),
+            ),
+            const _CommentsPage(),
+          ]
+        : <Widget>[
+            _coverPage(scheme),
+            const ClipRRect(
+              borderRadius: BorderRadius.all(Radius.circular(20)),
+              child: LyricsPanel(compact: false),
+            ),
+            const _CommentsPage(),
+          ];
     return SizedBox.expand(
       child: Column(children: [
         Expanded(
           child: PageView(
             controller: _controller,
             onPageChanged: (i) => setState(() => _index = i),
-            children: [
-              _coverPage(scheme),
-              const ClipRRect(
-                borderRadius: BorderRadius.all(Radius.circular(20)),
-                child: LyricsPanel(compact: false),
-              ),
-              const _CommentsPage(),
-            ],
+            children: pages,
           ),
         ),
         const SizedBox(height: 10),
         // 页面指示点
         Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          for (var i = 0; i < 3; i++)
+          for (var i = 0; i < pages.length; i++)
             AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               margin: const EdgeInsets.symmetric(horizontal: 4),
@@ -419,19 +587,31 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
             ],
           ),
         ),
-        child: item?.artUri != null
+        child: (item?.artBytes?.isNotEmpty ?? false)
             ? ClipRRect(
                 borderRadius: BorderRadius.circular(20),
-                child: Image.network(
-                  item!.artUri.toString(),
+                child: Image.memory(
+                  item!.artBytes!,
                   fit: BoxFit.cover,
+                  gaplessPlayback: true,
                   errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
                       size: 60,
                       color: Colors.white.withValues(alpha: 0.85)),
                 ),
               )
-            : Icon(Icons.graphic_eq,
-                size: 60, color: Colors.white.withValues(alpha: 0.85)),
+            : item?.artUri != null
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.network(
+                      item!.artUri.toString(),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
+                          size: 60,
+                          color: Colors.white.withValues(alpha: 0.85)),
+                    ),
+                  )
+                : Icon(Icons.graphic_eq,
+                    size: 60, color: Colors.white.withValues(alpha: 0.85)),
       ),
     );
   }
@@ -625,6 +805,119 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
       child: Container(
           color: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
           child: body),
+    );
+  }
+}
+
+/// 宽屏左栏封面（桌面/平板横屏）：封面独立展示，点击弹操作菜单。
+class _WideCoverPane extends ConsumerWidget {
+  const _WideCoverPane({required this.item});
+  final PlayerItem? item;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scheme = Theme.of(context).colorScheme;
+    final art = item?.artUri;
+    return Center(
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: item == null
+              ? null
+              : () => _showCoverActions(context, ref, item!, () {}),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [scheme.primary, const Color(0xFF8B5CF6), scheme.tertiary],
+              ),
+            ),
+            child: (item?.artBytes?.isNotEmpty ?? false)
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Image.memory(
+                      item!.artBytes!,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
+                          size: 72,
+                          color: Colors.white.withValues(alpha: 0.85)),
+                    ),
+                  )
+                : art != null
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(24),
+                        child: Image.network(
+                          art.toString(),
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
+                              size: 72,
+                              color: Colors.white.withValues(alpha: 0.85)),
+                        ),
+                      )
+                    : Icon(Icons.graphic_eq,
+                        size: 72,
+                        color: Colors.white.withValues(alpha: 0.85)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 播放页背景：封面高斯模糊 + 主色渐变遮罩。
+/// 无封面时退化为纯主色渐变（不留空白）。
+class _CoverBackdrop extends StatelessWidget {
+  const _CoverBackdrop({required this.artUrl, required this.accent});
+  final String? artUrl;
+  final Color accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (artUrl != null && artUrl!.isNotEmpty)
+          ImageFiltered(
+            imageFilter: ImageFilter.blur(sigmaX: 40, sigmaY: 40, tileMode: TileMode.decal),
+            child: Image.network(
+              artUrl!,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          ),
+        // 主色渐变遮罩：保证前景文字始终可读（WCAG 对比度）
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                scheme.surface.withValues(alpha: 0.86),
+                scheme.surface.withValues(alpha: 0.94),
+                scheme.surface,
+              ],
+            ),
+          ),
+        ),
+        // 顶部一层淡淡的主色光晕
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                accent.withValues(alpha: 0.16),
+                Colors.transparent,
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

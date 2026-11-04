@@ -7,7 +7,7 @@ import '../models/quality.dart';
 import 'logger.dart';
 import 'playlists.dart';
 
-/// 全量备份 v2：收藏 + 歌单 + 音源脚本 + 播放设置。
+/// 全量备份 v3：收藏 + 播放历史 + 歌单 + 音源脚本 + 播放设置。
 /// 不含 WebDAV 配置本身（含密码）。
 class BackupService {
   BackupService(this._ref);
@@ -19,7 +19,7 @@ class BackupService {
     final registry = _ref.read(sourceRegistryProvider);
     final settings = _ref.read(appSettingsProvider);
     return const JsonEncoder.withIndent('  ').convert({
-      'version': 2,
+      'version': 3,
       'app': 'AiwliMusic',
       'createdAt': DateTime.now().toIso8601String(),
       'favorites': {
@@ -38,11 +38,19 @@ class BackupService {
           for (final s in registry.installed) s.toJson(),
         ],
       },
+      // 播放历史：换机/重装后仍能「继续聆听」
+      'history': {
+        'items': [
+          for (final h in _ref.read(playHistoryProvider).items) h.toJson(),
+        ],
+      },
       'settings': {
         'quality': settings.quality.name,
         'eqEnabled': settings.eqEnabled,
         'eqPreset': settings.eqPreset,
         'eqGains': settings.eqGains,
+        'lyricTranslation': settings.lyricTranslation,
+        'lyricRoman': settings.lyricRoman,
       },
     });
   }
@@ -64,6 +72,15 @@ class BackupService {
     final favAdded =
         await _ref.read(favoritesProvider).importJson(jsonEncode(favRaw));
     if (favAdded > 0) parts.add('收藏 +$favAdded');
+
+    // —— 播放历史（按 key 合并，保留较新的 playedAt）——
+    final histRaw = (data['history'] as Map?)?['items'] as List?;
+    if (histRaw != null && histRaw.isNotEmpty) {
+      final added = await _ref
+          .read(playHistoryProvider)
+          .importJson(jsonEncode({'items': histRaw}));
+      if (added > 0) parts.add('播放历史 +$added');
+    }
 
     // —— 歌单（按 id 合并）——
     final plRaw = (data['playlists'] as Map?)?['playlists'] as List?;
@@ -127,6 +144,12 @@ class BackupService {
         gains: gains,
         preset: st['eqPreset'] as String?,
       );
+      if (st['lyricTranslation'] != null || st['lyricRoman'] != null) {
+        await settings.setLyricPrefs(
+          translation: st['lyricTranslation'] as bool?,
+          roman: st['lyricRoman'] as bool?,
+        );
+      }
       parts.add('设置 ✓');
     }
 

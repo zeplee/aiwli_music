@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../storage/settings_store.dart';
 import 'cover_backfill.dart';
 import 'safe_notifier.dart';
@@ -162,6 +164,37 @@ class PlayHistoryService extends SafeNotifier {
     _items.clear();
     await _flush();
     notifyListeners();
+  }
+
+  /// 合并外部历史（WebDAV 恢复）：按 key 去重，同一首保留 playedAt 较新的。
+  /// 返回新增条数。
+  Future<int> importJson(String raw) async {
+    await ensureLoaded();
+    final data = jsonDecode(raw) as Map<Object?, Object?>;
+    final list = (data['items'] as List?) ?? const [];
+    final byKey = {for (final e in _items) e.key: e};
+    var added = 0;
+    for (final m in list) {
+      if (m is! Map) continue;
+      final it = HistoryItem.fromMap(m);
+      if (it.musicId.isEmpty) continue;
+      final existing = byKey[it.key];
+      if (existing == null) {
+        byKey[it.key] = it;
+        added++;
+      } else if (it.playedAt.isAfter(existing.playedAt)) {
+        byKey[it.key] = it;
+      }
+    }
+    if (added == 0) return 0;
+    final merged = byKey.values.toList()
+      ..sort((a, b) => b.playedAt.compareTo(a.playedAt));
+    _items
+      ..clear()
+      ..addAll(merged.take(maxItems));
+    await _flush();
+    notifyListeners();
+    return added;
   }
 
   Future<void> _flush() =>
