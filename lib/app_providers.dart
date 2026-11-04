@@ -9,7 +9,6 @@ import 'core/models/lyric.dart';
 import 'core/models/music.dart';
 import 'core/services/app_settings.dart';
 import 'core/services/backup_service.dart';
-import 'core/services/favorites_service.dart';
 import 'core/services/logger.dart';
 import 'core/services/play_history_service.dart';
 import 'core/services/playlists.dart';
@@ -169,8 +168,10 @@ final sleepTimerProvider = ChangeNotifierProvider<SleepTimerService>((ref) {
 // ============ 歌单 ============
 
 final playlistsProvider = ChangeNotifierProvider<PlaylistService>((ref) {
-  final s = PlaylistService(ref.watch(settingsStoreProvider));
-  s.load();
+  final store = ref.watch(settingsStoreProvider);
+  final s = PlaylistService(store);
+  // load 完成后再迁移旧 favorites.json（幂等：已迁移则无条目可并）
+  s.load().then((_) => migrateLegacyFavorites(s, store));
   ref.onDispose(s.dispose);
   return s;
 });
@@ -432,15 +433,55 @@ final searchHistoryProvider =
   return svc;
 });
 
-final favoritesProvider = ChangeNotifierProvider<FavoritesService>((ref) {
-  final svc = FavoritesService(ref.watch(settingsStoreProvider));
-  svc.ensureLoaded().then((_) {
-    // 旧数据封面回填（已有封面的条目直接跳过，幂等）
-    svc.backfillCovers();
-  });
-  ref.onDispose(svc.dispose);
-  return svc;
-});
+/// 一次性迁移：把旧版独立的 favorites.json 并入「我的收藏」系统歌单。
+///
+/// 背景：收藏与歌单曾是两套并行模型（两套存储、两套 UI、备份要写两份）。
+/// 参考工程（lx / 栖弦）都只有歌单，没有独立收藏。故合并为
+/// 「我的收藏」= 一个不可删除、置顶的系统歌单，爱心按钮 = 往它里面加/删。
+///
+/// 迁移完把 favorites.json 改名备份，避免重复迁移。
+Future<void> migrateLegacyFavorites(PlaylistService playlists,
+    SettingsStore store) async {
+  final data = await store.load('favorites.json');
+  final list = (data['items'] as List?) ?? const [];
+  if (list.isEmpty) return;
+
+  final entries = <PlaylistEntry>[];
+  for (final m in list) {
+    if (m is! Map) continue;
+    final musicId = m['musicId']?.toString() ?? '';
+    if (musicId.isEmpty) continue;
+    entries.add(PlaylistEntry(
+      sourceId: m['sourceId']?.toString() ?? '',
+      musicId: musicId,
+      title: m['title']?.toString() ?? '',
+      artist: m['artist']?.toString() ?? '',
+      album: m['album'] as String?,
+      picUrl: m['picUrl'] as String?,
+      durationMs: (m['durationMs'] as num?)?.toInt(),
+    ));
+  }
+
+  if (entries.isNotEmpty) {
+    final added = await playlists.mergeIntoFavorites(entries);
+    AppLog.i('Migrate', '收藏并入歌单：$added/${entries.length} 首');
+  }
+
+  // 用户可能早就自建过一个叫「我的收藏」的歌单（lx 导入常见）。
+  // 现在系统歌单接管这个名字，两者内容往往完全重复。
+  // 处理：把它的条目并入系统歌单（去重），再把重名的普通歌单改名为
+  // 「我的收藏（旧）」保留数据，避免用户以为歌单丢了。
+  final dup = playlists.playlists.where(
+      (p) => !p.system && p.name == '我的收藏');
+  for (final old in dup.toList()) {
+    final merged = await playlists.mergeIntoFavorites(old.entries);
+    playlists.rename(old.id, '我的收藏（旧）');
+    AppLog.i('Migrate',
+        '重名歌单「我的收藏」(${old.entries.length} 首) 并入系统歌单 $merged 首，原名改为「我的收藏（旧）」');
+  }
+  // 标记已迁移（保留原文件内容便于回滚，但不再读取）
+  await store.flush('favorites.json.migrated', {'at': DateTime.now().toIso8601String()});
+}
 
 final webDavServiceProvider = ChangeNotifierProvider<WebDavService>((ref) {
   final svc = WebDavService(ref.watch(settingsStoreProvider));

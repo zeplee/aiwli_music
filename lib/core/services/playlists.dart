@@ -15,6 +15,7 @@ class PlaylistEntry {
     this.durationMs,
     this.resolvedPath,
     this.rawJson,
+    this.picUrl,
   });
 
   factory PlaylistEntry.fromJson(Map<Object?, Object?> m) => PlaylistEntry(
@@ -23,6 +24,7 @@ class PlaylistEntry {
         title: m['title']?.toString() ?? '未知标题',
         artist: m['artist']?.toString() ?? '未知歌手',
         album: m['album'] as String?,
+        picUrl: m['picUrl'] as String?,
         durationMs: (m['durationMs'] as num?)?.toInt(),
         resolvedPath: m['resolvedPath'] as String?,
         rawJson: m['rawJson'] as String?,
@@ -47,6 +49,9 @@ class PlaylistEntry {
   final String title;
   final String artist;
   final String? album;
+
+  /// 封面 URL（各平台 CDN 直链）。歌单列表/收藏区块展示用。
+  final String? picUrl;
   final int? durationMs;
   final String? resolvedPath;
 
@@ -56,6 +61,7 @@ class PlaylistEntry {
         'title': title,
         'artist': artist,
         if (album != null) 'album': album,
+        if (picUrl != null) 'picUrl': picUrl,
         if (durationMs != null) 'durationMs': durationMs,
         if (resolvedPath != null) 'resolvedPath': resolvedPath,
         if (rawJson != null) 'rawJson': rawJson,
@@ -68,23 +74,30 @@ class Playlist {
     required this.name,
     required this.createdAtMs,
     this.entries = const [],
+    this.system = false,
   });
   final String id;
   final String name;
   final int createdAtMs;
   final List<PlaylistEntry> entries;
 
+  /// 系统歌单：自动创建、置顶、不可删除/改名。
+  /// 目前只有「我的收藏」一个（取代原先独立的 favorites 存储）。
+  final bool system;
+
   Playlist copyWith({String? name, List<PlaylistEntry>? entries}) => Playlist(
         id: id,
         name: name ?? this.name,
         createdAtMs: createdAtMs,
         entries: entries ?? this.entries,
+        system: system,
       );
 
   factory Playlist.fromJson(Map<Object?, Object?> m) => Playlist(
         id: '${m['id'] ?? ''}',
         name: '${m['name'] ?? ''}',
         createdAtMs: (m['createdAtMs'] as num?)?.toInt() ?? 0,
+        system: m['system'] == true,
         entries: ((m['entries'] as List?) ?? const [])
             .map((e) => PlaylistEntry.fromJson(e as Map))
             .toList(),
@@ -94,7 +107,8 @@ class Playlist {
         'id': id,
         'name': name,
         'createdAtMs': createdAtMs,
-        'entries': entries.map((e) => e.toJson()).toList(),
+          'entries': entries.map((e) => e.toJson()).toList(),
+        if (system) 'system': true,
       };
 }
 
@@ -104,14 +118,45 @@ class PlaylistService extends SafeNotifier {
   final SettingsStore _store;
 
   static const _file = 'playlists.json';
+
+  /// 「我的收藏」系统歌单 id（取代原先独立的 favorites.json）。
+  static const favoritesId = 'sys_favorites';
+
   List<Playlist> playlists = [];
+
+  /// 系统歌单永远排在最前，其余按创建时间。
+  List<Playlist> get sorted => [
+        for (final p in playlists)
+          if (p.system) p,
+        for (final p in playlists)
+          if (!p.system) p,
+      ];
+
+  Playlist? get favorites =>
+      playlists.where((p) => p.id == favoritesId).firstOrNull;
 
   Future<void> load() async {
     final m = await _store.load(_file);
     playlists = ((m['playlists'] as List?) ?? const [])
         .map((e) => Playlist.fromJson(e as Map))
         .toList();
+    _ensureSystemPlaylists();
     notifyListeners();
+  }
+
+  /// 保证「我的收藏」存在（老用户升级后自动补建）。
+  void _ensureSystemPlaylists() {
+    if (playlists.any((p) => p.id == favoritesId)) return;
+    playlists = [
+      Playlist(
+        id: favoritesId,
+        name: '我的收藏',
+        createdAtMs: 0,
+        system: true,
+      ),
+      ...playlists,
+    ];
+    unawaitedPersist();
   }
 
   Future<void> _persist() async {
@@ -132,16 +177,57 @@ class PlaylistService extends SafeNotifier {
   }
 
   void delete(String id) {
+    // 系统歌单不可删除（收藏入口常驻）
+    if (playlists.any((p) => p.id == id && p.system)) return;
     playlists = playlists.where((p) => p.id != id).toList();
     unawaitedPersist();
   }
 
   void rename(String id, String name) {
+    if (playlists.any((p) => p.id == id && p.system)) return;
     playlists = [
       for (final p in playlists)
         if (p.id == id) p.copyWith(name: name.trim()) else p
     ];
     unawaitedPersist();
+  }
+
+  /// 收藏：有则移出，无则加入「我的收藏」。返回操作后是否在收藏中。
+  bool toggleFavorite(PlaylistEntry entry) {
+    final fav = favorites;
+    final key = '${entry.sourceId}/${entry.musicId}';
+    final existing = fav?.entries
+            .indexWhere((e) => '${e.sourceId}/${e.musicId}' == key) ??
+        -1;
+    if (existing >= 0) {
+      removeEntry(favoritesId, existing);
+      return false;
+    }
+    addEntries(favoritesId, [entry]);
+    return true;
+  }
+
+  bool isFavorite(String sourceId, String musicId) {
+    final key = '$sourceId/$musicId';
+    return favorites?.entries
+            .any((e) => '${e.sourceId}/${e.musicId}' == key) ??
+        false;
+  }
+
+  /// 把旧 favorites.json 的条目一次性并入「我的收藏」（迁移用，按 key 去重）。
+  Future<int> mergeIntoFavorites(List<PlaylistEntry> entries) async {
+    final fav = favorites;
+    if (fav == null) return 0;
+    final existing = {
+      for (final e in fav.entries) '${e.sourceId}/${e.musicId}',
+    };
+    final fresh = [
+      for (final e in entries)
+        if (existing.add('${e.sourceId}/${e.musicId}')) e,
+    ];
+    if (fresh.isEmpty) return 0;
+    addEntries(favoritesId, fresh);
+    return fresh.length;
   }
 
   void addEntries(String id, List<PlaylistEntry> entries) {

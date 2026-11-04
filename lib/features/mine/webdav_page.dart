@@ -98,13 +98,14 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
 
   Future<String> _upload() async {
     _applyFieldsToService();
-    await ref.read(favoritesProvider).ensureLoaded();
+    await ref.read(playlistsProvider).load();
     await ref.read(playlistsProvider).load();
     await ref.read(backupProvider).upload();
-    final favorites = ref.read(favoritesProvider);
+    final favCount =
+        ref.read(playlistsProvider).favorites?.entries.length ?? 0;
     final playlists = ref.read(playlistsProvider);
     final sources = ref.read(sourceRegistryProvider);
-    return '已上传全量备份：收藏 ${favorites.items.length} 首、'
+    return '已上传全量备份：收藏 $favCount 首、'
         '歌单 ${playlists.playlists.length} 个、音源 ${sources.installed.length} 个、设置 ✓';
   }
 

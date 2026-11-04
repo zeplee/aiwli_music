@@ -47,13 +47,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   @override
   Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
-    final favorites = ref.watch(favoritesProvider);
+    final playlists = ref.watch(playlistsProvider);
     final settings = ref.watch(appSettingsProvider);
     final sleep = ref.watch(sleepTimerProvider);
     final scheme = Theme.of(context).colorScheme;
     final item = core.current;
+    // 收藏 = 「我的收藏」系统歌单里的成员（不再有独立的 favorites 存储）
     final isFav =
-        item != null && favorites.isFavorite(item.sourceId, item.musicId);
+        item != null && playlists.isFavorite(item.sourceId, item.musicId);
 
     return CallbackShortcuts(
       bindings: {
@@ -204,15 +205,14 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     tooltip: isFav ? '已收藏 · 点击取消' : '收藏到「我的收藏」',
                     onPressed: item == null
                         ? null
-                        : () => favorites.toggle(
+                        : () => playlists.toggleFavorite(PlaylistEntry(
                               sourceId: item.sourceId,
                               musicId: item.musicId,
                               title: item.title,
                               artist: item.artist,
                               album: item.album,
-                              picUrl: item.artUri?.toString(),
                               durationMs: item.duration?.inMilliseconds,
-                            ),
+                            )),
                     icon: Icon(
                       isFav ? Icons.favorite : Icons.favorite_border,
                       color: isFav ? scheme.error : scheme.onSurfaceVariant,

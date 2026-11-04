@@ -45,7 +45,7 @@ class DiscoverPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final core = ref.watch(playerCoreProvider);
-    final favorites = ref.watch(favoritesProvider);
+    final favorites = ref.watch(playlistsProvider).favorites;
     // 「继续聆听」用真实播放历史（之前只显示当前一首，形同虚设）
     final history = ref.watch(playHistoryProvider).items;
     final recent = [
@@ -178,9 +178,9 @@ class DiscoverPage extends ConsumerWidget {
             },
           ),
         // —— 我的收藏 ——
-        if (favorites.items.isNotEmpty) ...[
-          const _SectionHeader('我的收藏'),
-          for (final f in favorites.items.take(3))
+        if (favorites != null && favorites.entries.isNotEmpty) ...[
+          _SectionHeader('我的收藏 · ${favorites.entries.length} 首'),
+          for (final f in favorites.entries.take(3))
             ListTile(
               leading: CoverImage(url: f.picUrl, size: 44, icon: Icons.favorite),
               title: Text(f.title,
@@ -191,22 +191,19 @@ class DiscoverPage extends ConsumerWidget {
               // 点击播放：把整个收藏列表入队，从这一首开始
               onTap: () {
                 final favItems = [
-                  for (final x in favorites.items)
+                  for (final x in favorites.entries)
                     PlayerItem(
                       title: x.title,
                       artist: x.artist,
                       sourceId: x.sourceId,
                       musicId: x.musicId,
                       album: x.album,
-                      artUri: (x.picUrl == null || x.picUrl!.isEmpty)
-                          ? null
-                          : Uri.tryParse(x.picUrl!),
                       duration: x.durationMs == null
                           ? null
                           : Duration(milliseconds: x.durationMs!),
                     ),
                 ];
-                final idx = favorites.items.indexOf(f);
+                final idx = favorites.entries.indexOf(f);
                 core.setQueue(favItems, index: idx < 0 ? 0 : idx);
                 Navigator.of(context).push(MaterialPageRoute<void>(
                     builder: (_) => const PlayerPage()));

@@ -14,7 +14,6 @@ class BackupService {
   final Ref _ref;
 
   String buildBackupJson() {
-    final favorites = _ref.read(favoritesProvider);
     final playlists = _ref.read(playlistsProvider);
     final registry = _ref.read(sourceRegistryProvider);
     final settings = _ref.read(appSettingsProvider);
@@ -22,11 +21,6 @@ class BackupService {
       'version': 3,
       'app': 'AiwliMusic',
       'createdAt': DateTime.now().toIso8601String(),
-      'favorites': {
-        'items': [
-          for (final f in favorites.items) f.toJson(),
-        ],
-      },
       'playlists': {
         'playlists': [
           for (final p in playlists.playlists) p.toJson(),
@@ -67,11 +61,33 @@ class BackupService {
     final version = (data['version'] as num?)?.toInt() ?? 1;
     final parts = <String>[];
 
-    // —— 收藏（v1 兼容：顶层 items）——
-    final favRaw = (data['favorites'] as Map?) ?? {'items': data['items'] ?? const []};
-    final favAdded =
-        await _ref.read(favoritesProvider).importJson(jsonEncode(favRaw));
-    if (favAdded > 0) parts.add('收藏 +$favAdded');
+    // —— 收藏：老备份（v1/v2 的 favorites 段）并入「我的收藏」系统歌单 ——
+    final favRaw =
+        (data['favorites'] as Map?) ?? {'items': data['items'] ?? const []};
+    final favList = (favRaw['items'] as List?) ?? const [];
+    if (favList.isNotEmpty) {
+      final entries = <PlaylistEntry>[];
+      for (final m in favList) {
+        if (m is! Map) continue;
+        final sourceId = m['sourceId']?.toString() ?? '';
+        final musicId = m['musicId']?.toString() ?? '';
+        if (musicId.isEmpty) continue;
+        entries.add(PlaylistEntry(
+          sourceId: sourceId,
+          musicId: musicId,
+          title: m['title']?.toString() ?? '',
+          artist: m['artist']?.toString() ?? '',
+          album: m['album'] as String?,
+          picUrl: m['picUrl'] as String?,
+          durationMs: (m['durationMs'] as num?)?.toInt(),
+        ));
+      }
+      if (entries.isNotEmpty) {
+        final added =
+            await _ref.read(playlistsProvider).mergeIntoFavorites(entries);
+        if (added > 0) parts.add('收藏 +$added');
+      }
+    }
 
     // —— 播放历史（按 key 合并，保留较新的 playedAt）——
     final histRaw = (data['history'] as Map?)?['items'] as List?;

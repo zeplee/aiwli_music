@@ -17,7 +17,8 @@ class MinePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final registry = ref.watch(sourceRegistryProvider);
-    final favorites = ref.watch(favoritesProvider);
+    final favCount =
+        ref.watch(playlistsProvider).favorites?.entries.length ?? 0;
     final webdav = ref.watch(webDavServiceProvider);
 
     return Scaffold(
@@ -120,7 +121,7 @@ class MinePage extends ConsumerWidget {
         ListTile(
           leading: const Icon(Icons.favorite),
           title: const Text('我的收藏'),
-          subtitle: Text('${favorites.items.length} 首'),
+          subtitle: Text('$favCount 首'),
           trailing: const Icon(Icons.chevron_right),
           onTap: null, // 收藏列表页待 M4 后期；数据已在 WebDAV 备份内
         ),
