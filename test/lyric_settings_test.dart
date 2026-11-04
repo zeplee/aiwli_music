@@ -68,6 +68,35 @@ void main() {
     });
   });
 
+  group('歌词对齐', () {
+    test('默认居中', () async {
+      final s = AppSettings(_MemStore());
+      await s.load();
+      expect(s.lyricAlignStart, isFalse);
+    });
+
+    test('切左对齐并持久化', () async {
+      final store = _MemStore();
+      final a = AppSettings(store);
+      await a.load();
+      await a.setLyricPrefs(alignStart: true);
+
+      final b = AppSettings(store);
+      await b.load();
+      expect(b.lyricAlignStart, isTrue);
+    });
+
+    test('改对齐不影响字号与开关', () async {
+      final s = AppSettings(_MemStore());
+      await s.load();
+      await s.setLyricPrefs(sizeLevel: 4, translation: false);
+      await s.setLyricPrefs(alignStart: true);
+      expect(s.lyricSizeLevel, 4);
+      expect(s.lyricTranslation, isFalse);
+      expect(s.lyricAlignStart, isTrue);
+    });
+  });
+
   group('本地扫描目录', () {
     test('默认空 = 扫描全部', () async {
       final s = AppSettings(_MemStore());

@@ -2,9 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app_providers.dart';
-import '../../core/ui/cover_image.dart';
-import '../../player/models.dart';
-import '../player/player_page.dart';
 import '../downloads/downloads_page.dart';
 import '../library/library_page.dart';
 import '../library/recent_page.dart';
@@ -25,37 +22,6 @@ class MinePage extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('我的')),
-      bottomNavigationBar: ValueListenableBuilder<PlayerUiState>(
-        valueListenable: ref.watch(playerCoreProvider).state,
-        builder: (context, s, _) {
-          if (s.title.isEmpty) return const SizedBox.shrink();
-          final core = ref.read(playerCoreProvider);
-          return SafeArea(
-            child: ListTile(
-              tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-              leading: CoverImage(
-                bytes: core.current?.artBytes,
-                url: core.current?.artUri?.toString(),
-                size: 40,
-                radius: 6,
-              ),
-              title: Text(s.title,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(s.artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12)),
-              trailing: IconButton(
-                icon: Icon(s.playing ? Icons.pause : Icons.play_arrow),
-                tooltip: s.playing ? '暂停' : '播放',
-                onPressed: () => s.playing ? core.pause() : core.play(),
-              ),
-              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => const PlayerPage())),
-            ),
-          );
-        },
-      ),
       body: ListView(children: [
         const SizedBox(height: 8),
         // —— 头部卡 ——

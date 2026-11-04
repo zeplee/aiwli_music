@@ -27,6 +27,9 @@ class AppSettings extends SafeNotifier {
   /// 参考栖弦 settings 的 directory_picker_tile：让用户指定只看某个文件夹。
   List<String> localMusicDirs = [];
 
+  /// 歌词对齐：true = 左对齐（参考栖弦 TextAlign.start），false = 居中。
+  bool lyricAlignStart = false;
+
   /// 该档位对应的主歌词字号。
   double get lyricFontSize => switch (lyricSizeLevel) {
         1 => 15,
@@ -50,6 +53,7 @@ class AppSettings extends SafeNotifier {
     lyricTranslation = m['lyricTranslation'] != false;
     lyricRoman = m['lyricRoman'] != false;
     lyricSizeLevel = (m['lyricSizeLevel'] as num?)?.toInt() ?? 2;
+    lyricAlignStart = m['lyricAlignStart'] == true;
     final dirs = m['localMusicDirs'] as List?;
     if (dirs != null) {
       localMusicDirs = dirs.whereType<String>().toList();
@@ -71,6 +75,7 @@ class AppSettings extends SafeNotifier {
         'lyricTranslation': lyricTranslation,
         'lyricRoman': lyricRoman,
         'lyricSizeLevel': lyricSizeLevel,
+        'lyricAlignStart': lyricAlignStart,
         'localMusicDirs': localMusicDirs,
         'sleepTimerMinutes': sleepTimerMinutes,
         'songSort': songSort,
@@ -78,10 +83,11 @@ class AppSettings extends SafeNotifier {
       });
 
   Future<void> setLyricPrefs(
-      {bool? translation, bool? roman, int? sizeLevel}) async {
+      {bool? translation, bool? roman, int? sizeLevel, bool? alignStart}) async {
     if (translation != null) lyricTranslation = translation;
     if (roman != null) lyricRoman = roman;
     if (sizeLevel != null) lyricSizeLevel = sizeLevel.clamp(1, 4);
+    if (alignStart != null) lyricAlignStart = alignStart;
     notifyListeners();
     await _flush();
   }

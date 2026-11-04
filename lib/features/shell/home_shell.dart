@@ -4,6 +4,7 @@ import '../discover/discover_page.dart';
 import '../library/library_page.dart';
 import '../mine/mine_page.dart';
 import '../search/search_page.dart';
+import 'mini_player_bar.dart';
 
 /// 三个 Tab 的职责边界（对齐栖弦：发现/曲库/我的）：
 ///   发现 = 纯推荐（每日推荐 / 排行榜 / 今日热门）——别人给我看的内容
@@ -61,7 +62,11 @@ class _HomeShellState extends State<HomeShell> {
         if (!wide) {
           // 手机/窄屏：保持原底部导航
           return Scaffold(
-            body: IndexedStack(index: _index, children: _pages),
+            // 内容 + 全局快捷播放条（三个 Tab 共用同一份实现）
+            body: Column(children: [
+              Expanded(child: IndexedStack(index: _index, children: _pages)),
+              const MiniPlayerBar(),
+            ]),
             bottomNavigationBar: NavigationBar(
               selectedIndex: _index,
               onDestinationSelected: (i) => setState(() => _index = i),
@@ -93,7 +98,12 @@ class _HomeShellState extends State<HomeShell> {
                 destinations: _railDestinations,
               ),
               const VerticalDivider(width: 1),
-              Expanded(child: _pages[_index]),
+              Expanded(
+                child: Column(children: [
+                  Expanded(child: _pages[_index]),
+                  const MiniPlayerBar(),
+                ]),
+              ),
             ],
           ),
         );

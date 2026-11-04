@@ -97,14 +97,24 @@ class _LyricSettingsSheet extends ConsumerWidget {
               color: scheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Column(children: [
-              Text('夜色渐浓 风也温柔',
-                  textAlign: TextAlign.center,
+            child: Column(
+              crossAxisAlignment: settings.lyricAlignStart
+                  ? CrossAxisAlignment.start
+                  : CrossAxisAlignment.center,
+              children: [
+              Padding(
+                padding: EdgeInsets.symmetric(
+                    horizontal: settings.lyricAlignStart ? 12 : 0),
+                child: Text('夜色渐浓 风也温柔',
+                  textAlign: settings.lyricAlignStart
+                      ? TextAlign.start
+                      : TextAlign.center,
                   style: TextStyle(
                     fontSize: settings.lyricFontSize,
                     fontWeight: FontWeight.bold,
                     color: scheme.onSurface,
                   )),
+              ),
               if (settings.lyricTranslation)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -117,6 +127,32 @@ class _LyricSettingsSheet extends ConsumerWidget {
                 ),
             ]),
           ),
+        ),
+
+        // —— 对齐方式（参考栖弦 TextAlign.start 的左对齐）——
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(children: [
+            const Text('对齐方式', style: TextStyle(fontSize: 13)),
+            const Spacer(),
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.format_align_center, size: 16),
+                    label: Text('居中', style: TextStyle(fontSize: 12))),
+                ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.format_align_left, size: 16),
+                    label: Text('左对齐', style: TextStyle(fontSize: 12))),
+              ],
+              selected: {settings.lyricAlignStart},
+              onSelectionChanged: (v) => ref
+                  .read(appSettingsProvider)
+                  .setLyricPrefs(alignStart: v.first),
+              showSelectedIcon: false,
+            ),
+          ]),
         ),
 
         // —— 翻译 / 罗马音开关 ——

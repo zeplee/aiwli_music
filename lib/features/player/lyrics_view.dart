@@ -156,6 +156,7 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
                 showTranslation: settings.lyricTranslation,
                 showRoman: settings.lyricRoman,
                 lyricFontSize: settings.lyricFontSize,
+                alignStart: settings.lyricAlignStart,
                 onSeek: (pos) => core.seek(pos),
               ),
             ),
@@ -406,6 +407,7 @@ class _FullLyricsList extends StatefulWidget {
     this.showRoman = true,
     this.onSeek,
     this.lyricFontSize = 19,
+    this.alignStart = false,
   });
   final LyricDocument doc;
   final LrcParser parser;
@@ -420,6 +422,9 @@ class _FullLyricsList extends StatefulWidget {
 
   /// 主歌词字号（跟随歌词设置，独立于系统字号）。
   final double lyricFontSize;
+
+  /// 左对齐（参考栖弦 TextAlign.start）；false = 居中。
+  final bool alignStart;
 
   @override
   State<_FullLyricsList> createState() => _FullLyricsListState();
@@ -585,9 +590,15 @@ class _FullLyricsListState extends State<_FullLyricsList> {
             // 间距 —— 这样视觉上「原文+译文」是一个整体，不同歌词之间才分开。
             // 之前是反的：译文 top 8、行间无间距，导致译文看起来像独立的歌词行。
             padding: const EdgeInsets.only(bottom: 20),
-            child: Center(
+            child: Align(
+              alignment: widget.alignStart
+                  ? Alignment.centerLeft
+                  : Alignment.center,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: widget.alignStart
+                    ? CrossAxisAlignment.start
+                    : CrossAxisAlignment.center,
                 children: [
                   active
                       ? _KaraokeLine(
@@ -605,7 +616,9 @@ class _FullLyricsListState extends State<_FullLyricsList> {
                       : Text(widget.doc.lines[i].text,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
+                          textAlign: widget.alignStart
+                              ? TextAlign.start
+                              : TextAlign.center,
                           style: TextStyle(
                               color: scheme.onSurfaceVariant, fontSize: 14)),
                   // 译文紧贴原文（2px），字号 0.6 倍
@@ -616,7 +629,9 @@ class _FullLyricsListState extends State<_FullLyricsList> {
                         tr,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
+                        textAlign: widget.alignStart
+                            ? TextAlign.start
+                            : TextAlign.center,
                         style: TextStyle(
                           fontSize: widget.lyricFontSize * 0.6,
                           height: 1.25,
@@ -632,7 +647,9 @@ class _FullLyricsListState extends State<_FullLyricsList> {
                         ro,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
+                        textAlign: widget.alignStart
+                            ? TextAlign.start
+                            : TextAlign.center,
                         style: TextStyle(
                           fontSize: widget.lyricFontSize * 0.55,
                           height: 1.25,

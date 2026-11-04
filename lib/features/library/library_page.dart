@@ -8,7 +8,6 @@ import 'package:on_audio_query_pluse/on_audio_query.dart';
 import '../../app_providers.dart';
 import '../../core/services/playlists.dart';
 import '../../core/ui/cover_image.dart';
-import '../../player/models.dart';
 import '../../player/player_core.dart';
 import '../player/player_page.dart';
 import 'playlist_pages.dart';
@@ -267,7 +266,6 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final core = ref.watch(playerCoreProvider);
     return Scaffold(
       appBar: AppBar(
         title: _searchMode
@@ -326,33 +324,6 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         ],
       ),
       body: _buildBody(),
-      bottomNavigationBar: ValueListenableBuilder<PlayerUiState>(
-        valueListenable: core.state,
-        builder: (context, s, _) {
-          if (s.title.isEmpty) return const SizedBox.shrink();
-          return SafeArea(
-            child: ListTile(
-              tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-              leading: CoverImage(
-                bytes: core.current?.artBytes,
-                url: core.current?.artUri?.toString(),
-                size: 40,
-                radius: 6,
-              ),
-              title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(
-                  '${s.artist} · ${_fmt(s.position)} / ${_fmt(s.duration ?? Duration.zero)}',
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                IconButton(
-                    onPressed: () => s.playing ? core.pause() : core.play(),
-                    icon: Icon(s.playing ? Icons.pause : Icons.play_arrow)),
-                IconButton(onPressed: core.next, icon: const Icon(Icons.skip_next)),
-              ]),
-            ),
-          );
-        },
-      ),
     );
   }
 
