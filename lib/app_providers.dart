@@ -198,8 +198,11 @@ class LyricState {
   /// 罗马音歌词（网易 romalrc）。
   final LyricDocument? roman;
 
-  bool get hasTranslation => translation != null;
-  bool get hasRoman => roman != null;
+  /// 只有真的解析出歌词行才算「有」（数据层可能返回空字符串/空文档，
+  /// 直接判断 != null 会显示一个点不动的空开关）。
+  bool get hasTranslation =>
+      translation != null && translation!.lines.isNotEmpty;
+  bool get hasRoman => roman != null && roman!.lines.isNotEmpty;
 }
 
 class LyricService extends SafeNotifier {

@@ -489,13 +489,54 @@ class _FullLyricsListState extends State<_FullLyricsList> {
         duration: const Duration(milliseconds: 320), curve: Curves.easeOut);
   }
 
-  /// 按时间戳从译文/罗马音文档取对应行（±200ms 视为同一行）。
+  /// 从译文/罗马音文档取当前行的对应文本。
+  ///
+  /// 不能用严格的「时间戳相等」匹配：实测网易的 tlyric/romalrc 时间轴与
+  /// 原歌词并非逐行对齐（Lemon 只有 42/46 行能命中 ±200ms），
+  /// 会导致部分行明明有译文却显示空白。
+  ///
+  /// 改用「区间归属」：一行原文的译文 = 时间落在
+  /// [本行起始, 下一行起始) 区间内、时间最接近本行起始的那条。
+  /// 末尾行没有下界，用「时间 >= 本行起始」的就近取。
   String? _auxText(LyricDocument? aux, int index) {
     if (aux == null || aux.lines.isEmpty) return null;
-    final t = widget.doc.lines[index].start;
+    final lines = widget.doc.lines;
+    if (index < 0 || index >= lines.length) return null;
+
+    final start = lines[index].start;
+    final end = index + 1 < lines.length ? lines[index + 1].start : null;
+
+    String? best;
+    var bestDelta = Duration.zero;
+    var bestFound = false;
     for (final a in aux.lines) {
-      if ((a.start - t).inMilliseconds.abs() <= 200) return a.text;
+      // 落在本行区间内
+      final inRange =
+          end == null ? a.start >= start : (a.start >= start && a.start < end);
+      if (!inRange) continue;
+      final delta = a.start >= start ? a.start - start : start - a.start;
+      if (!bestFound || delta < bestDelta) {
+        bestFound = true;
+        bestDelta = delta;
+        best = a.text;
+      }
     }
+    if (bestFound) return best;
+
+    // 区间内没有（译文比原文稀疏）：取时间上最接近原文起始的一条，
+    // 但要限制在半个行距内，避免把隔壁很远的译文错配过来。
+    Duration? nearest;
+    var nearestDelta = const Duration(days: 1);
+    for (final a in aux.lines) {
+      final d = a.start >= start ? a.start - start : start - a.start;
+      if (d < nearestDelta) {
+        nearestDelta = d;
+        nearest = a.start;
+        best = a.text;
+      }
+    }
+    // 兜底仅在误差 < 1.5s 时接受（超过就不是同一句了）
+    if (nearest != null && nearestDelta.inMilliseconds <= 1500) return best;
     return null;
   }
 

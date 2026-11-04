@@ -28,7 +28,10 @@ class LyricSdk {
   }
 
   static Future<LrcResult?> _direct(String sourceId, String musicId) async {
-    final id = musicId.replaceFirst(RegExp(r'^(kw|wy|tx|kg|mg)_'), '');
+    final id = musicId.replaceFirst(RegExp(r'^(kw|wy|tx|kg|mg)_'), '').trim();
+    // 空 id / "0" 是无效曲目：直查会命中占位歌词（实测 id=0 返回 14 字符
+    // 的垃圾文案），反而挡住后面的跨平台搜索兜底。
+    if (id.isEmpty || id == '0' || int.tryParse(id) == 0) return null;
     switch (sourceId) {
       case 'wy':
         return _wyLyric(id);
@@ -90,6 +93,12 @@ class LyricSdk {
       if (body is! Map) return null;
       final lrc = (body['lrc'] as Map?)?['lyric'] as String?;
       if (lrc == null || lrc.trim().isEmpty) return null;
+      // 网易对无歌词曲目会返回很短的占位内容（实测 id=0 只有 14 字符）。
+      // 少于 40 字符基本不可能是一首歌的完整歌词，视为无效。
+      if (lrc.trim().length < 40) {
+        AppLog.i('LyricSdk', '网易 id=$id 歌词过短(${lrc.trim().length})，视为无歌词');
+        return null;
+      }
       final tl = (body['tlyric'] as Map?)?['lyric'] as String?;
       final ro = (body['romalrc'] as Map?)?['lyric'] as String?;
       AppLog.i('LyricSdk',
