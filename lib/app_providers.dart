@@ -470,17 +470,45 @@ Future<void> migrateLegacyFavorites(PlaylistService playlists,
     AppLog.i('Migrate', '收藏并入歌单：$added/${entries.length} 首');
   }
 
-  // 用户可能早就自建过一个叫「我的收藏」的歌单（lx 导入常见）。
-  // 现在系统歌单接管这个名字，两者内容往往完全重复。
-  // 处理：把它的条目并入系统歌单（去重），再把重名的普通歌单改名为
-  // 「我的收藏（旧）」保留数据，避免用户以为歌单丢了。
+  // 1) 重名「我的收藏」：内容并入系统歌单后**直接删除**，
+  //    不再保留「我的收藏（旧）」这种别扭的副本（用户明确反馈不要）。
   final dup = playlists.playlists.where(
       (p) => !p.system && p.name == '我的收藏');
   for (final old in dup.toList()) {
     final merged = await playlists.mergeIntoFavorites(old.entries);
-    playlists.rename(old.id, '我的收藏（旧）');
-    AppLog.i('Migrate',
-        '重名歌单「我的收藏」(${old.entries.length} 首) 并入系统歌单 $merged 首，原名改为「我的收藏（旧）」');
+    // 只有在条目全部并入成功时才删除，避免丢数据
+    final allIn = merged == old.entries.length ||
+        old.entries.every((e) => playlists.isFavorite(e.sourceId, e.musicId));
+    if (allIn) {
+      playlists.delete(old.id);
+      AppLog.i('Migrate',
+          '重名「我的收藏」(${old.entries.length} 首) 已全部并入系统歌单并删除');
+    } else {
+      playlists.rename(old.id, '我的收藏（未合并）');
+      AppLog.w('Migrate',
+          '重名「我的收藏」有 ${old.entries.length - merged} 首未能并入，保留为「我的收藏（未合并）」');
+    }
+  }
+
+  // 2) 清理历史遗留的「我的收藏（旧）」：内容已确认重复，直接删
+  for (final stale in playlists.playlists
+      .where((p) => !p.system && p.name == '我的收藏（旧）')
+      .toList()) {
+    playlists.delete(stale.id);
+    AppLog.i('Migrate', '已删除陈旧歌单「我的收藏（旧）」(${stale.entries.length} 首，内容与系统收藏重复)');
+  }
+
+  // 3) 文件夹识别：把「试听列表 / XX人名」这类歌单归到文件夹。
+  //    lx 导入时人名歌单往往就是"某个人的曲库"，
+  //    这里把名字与其下的歌单归到同名文件夹需要显式设置，
+  //    所以只做一件事：把 lx 的「试听列表」归入「lx 导入」文件夹，
+  //    避免它混在用户自己的歌单里。
+  final lxTrial = playlists.playlists
+      .where((p) => p.name == '试听列表' && p.folder == null)
+      .toList();
+  for (final t in lxTrial) {
+    playlists.setFolder(t.id, 'lx 导入');
+    AppLog.i('Migrate', '「试听列表」已归入文件夹「lx 导入」');
   }
   // 标记已迁移（保留原文件内容便于回滚，但不再读取）
   await store.flush('favorites.json.migrated', {'at': DateTime.now().toIso8601String()});

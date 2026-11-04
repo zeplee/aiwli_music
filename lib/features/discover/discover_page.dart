@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app_providers.dart';
-import '../../../core/models/music.dart';
+import '../../core/models/music.dart';
+import 'daily_recommend.dart';
 import '../../../player/player_core.dart';
 import '../player/player_page.dart';
 import 'board_songs_page.dart';
@@ -35,32 +36,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     return reg.activeId;
   }
 
-  static const List<PlayerItem> _demo = [
-    PlayerItem(
-        title: 'Demo · C 和弦',
-        artist: 'Aiwli 内置',
-        sourceId: 'local',
-        musicId: 'demo_c',
-        album: 'Aiwli Demo',
-        resolvedUrl: 'asset:///assets/audio/demo_c.wav',
-        duration: Duration(seconds: 30)),
-    PlayerItem(
-        title: 'Demo · G 和弦',
-        artist: 'Aiwli 内置',
-        sourceId: 'local',
-        musicId: 'demo_g',
-        album: 'Aiwli Demo',
-        resolvedUrl: 'asset:///assets/audio/demo_g.wav',
-        duration: Duration(seconds: 30)),
-    PlayerItem(
-        title: 'Demo · Am 和弦',
-        artist: 'Aiwli 内置',
-        sourceId: 'local',
-        musicId: 'demo_am',
-        album: 'Aiwli Demo',
-        resolvedUrl: 'asset:///assets/audio/demo_am.wav',
-        duration: Duration(seconds: 30)),
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -108,15 +83,30 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             selectedId: _effectiveSourceId(),
             onSelect: (id) => setState(() => _selectedSourceId = id),
           ),
-        // —— 每日推荐 Hero ——
+        // —— 每日推荐（真实曲目：多歌手种子 → 各平台取曲 → 去重混排）——
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-          child: _HeroCard(
-            onPlay: () {
-              core.setQueue(_demo, index: 0);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                  content: Text('已开始播放演示曲'),
-                  duration: Duration(seconds: 1)));
+          child: _DailyRecommendCard(
+            onPlayAll: (songs) {
+              if (songs.isEmpty) return;
+              core.setQueue([
+                for (final m in songs)
+                  PlayerItem(
+                    title: m.title,
+                    artist: m.artist,
+                    sourceId: m.sourceId,
+                    musicId: m.musicId,
+                    album: m.album?.name,
+                    artUri: (m.album?.picUrl == null ||
+                            m.album!.picUrl!.isEmpty)
+                        ? null
+                        : Uri.tryParse(m.album!.picUrl!),
+                    duration: m.duration,
+                    raw: m.raw,
+                  ),
+              ], index: 0);
+              Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => const PlayerPage()));
             },
           ),
         ),
@@ -125,11 +115,15 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
         if (ref.watch(sourceRegistryProvider).activeRuntime != null)
           FutureBuilder<List<MusicBoard>>(
             key: ValueKey('boards_${_effectiveSourceId()}'),
-            future: ref
-                .read(sourceRegistryProvider)
-                .activeRuntime!
-                .boardListFromScript()
-                .then((b) => b ?? const <MusicBoard>[]),
+            future: () async {
+              // 用选中源（_effectiveSourceId），而不是固定的 activeRuntime，
+              // 否则切换音源后排行榜不跟着变。
+              final reg = ref.read(sourceRegistryProvider);
+              final id = _effectiveSourceId();
+              final lx = id == null ? null : reg.runtimeOf(id);
+              if (lx == null) return const <MusicBoard>[];
+              return await lx.boardListFromScript() ?? const <MusicBoard>[];
+            }(),
             builder: (context, snap) {
               final boards = snap.data;
               if (boards == null || boards.isEmpty) return const SizedBox.shrink();
@@ -185,7 +179,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 // —— 今日热门（脚本首榜 Top10）——
                 const _SectionHeader('今日热门'),
                 _HotSongsSection(
-                    boardId: boards.first.id, boardName: boards.first.name),
+                    sourceId: _effectiveSourceId(),
+                    boardId: boards.first.id,
+                    boardName: boards.first.name),
               ]);
             },
           ),
@@ -211,62 +207,160 @@ class _SectionHeader extends StatelessWidget {
       );
 }
 
-class _HeroCard extends StatelessWidget {
-  const _HeroCard({required this.onPlay});
-  final VoidCallback onPlay;
+/// 每日推荐卡片：真实曲目（多歌手种子 → 各平台取曲 → 去重混排）。
+///
+/// 此前这里播放的是内置 demo 和弦音（asset:///assets/audio/demo_c.wav），
+/// 是明确的假功能。内置五平台没有官方"每日推荐"接口，
+/// 因此用种子歌手构造真实可播列表。
+class _DailyRecommendCard extends StatefulWidget {
+  const _DailyRecommendCard({required this.onPlayAll});
+  final void Function(List<MusicInfo> songs) onPlayAll;
+
+  @override
+  State<_DailyRecommendCard> createState() => _DailyRecommendCardState();
+}
+
+class _DailyRecommendCardState extends State<_DailyRecommendCard> {
+  List<MusicInfo>? _songs;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final songs = await DailyRecommend.fetchOrOverride();
+    if (!mounted) return;
+    setState(() {
+      _songs = songs;
+      _loading = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6), Color(0xFFE0A3C8)],
+    final songs = _songs ?? const <MusicInfo>[];
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6), Color(0xFFE0A3C8)],
+          ),
         ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.25),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              _loading
+                  ? '每日推荐 · 正在挑选'
+                  : (songs.isEmpty
+                      ? '每日推荐 · 暂无数据'
+                      : '每日推荐 · ${songs.length} 首'),
+              style: const TextStyle(color: Colors.white, fontSize: 11),
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // 推荐内容预览：显示前 3 首真实曲目（而不是空泛口号）
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 6),
+              child: Text('正在从各平台挑选今天的歌…',
+                  style: TextStyle(color: Colors.white70, fontSize: 13)),
+            )
+          else if (songs.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('暂时拿不到推荐',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Text('音源可能不可用，稍后重试',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontSize: 12)),
+              ]),
+            )
+          else ...[
+            for (final m in songs.take(3))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(children: [
+                  const Icon(Icons.music_note, size: 13, color: Colors.white70),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      '${m.title} · ${m.artist}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 12.5),
+                    ),
+                  ),
+                ]),
+              ),
+          ],
+
+          const SizedBox(height: 12),
+          Row(children: [
+            FilledButton.icon(
+              onPressed: songs.isEmpty ? null : () => widget.onPlayAll(songs),
+              icon: const Icon(Icons.play_arrow, size: 20),
+              label: Text(songs.isEmpty ? '暂不可播' : '播放全部'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: const Color(0xFF5B5FEF),
+                disabledBackgroundColor: Colors.white.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (songs.isNotEmpty)
+              TextButton.icon(
+                onPressed: _load,
+                icon: Icon(Icons.refresh,
+                    size: 16, color: Colors.white.withValues(alpha: 0.9)),
+                label: Text('换一批',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.9),
+                        fontSize: 12)),
+              ),
+          ]),
+        ]),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.25),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: const Text('每日推荐 · 为你精选',
-              style: TextStyle(color: Colors.white, fontSize: 11)),
-        ),
-        const SizedBox(height: 10),
-        const Text('开始今天的聆听',
-            style: TextStyle(
-                color: Colors.white,
-                fontSize: 22,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 14),
-        FilledButton.icon(
-          onPressed: onPlay,
-          icon: const Icon(Icons.play_arrow, size: 20),
-          label: const Text('立即播放'),
-          style: FilledButton.styleFrom(
-            backgroundColor: Colors.white,
-            foregroundColor: const Color(0xFF5B5FEF),
-          ),
-        ),
-      ]),
     );
   }
 }
 
 /// 今日热门：脚本首榜 Top10（零内置源，能力由导入脚本声明）。
 class _HotSongsSection extends ConsumerWidget {
-  const _HotSongsSection({required this.boardId, required this.boardName});
+  const _HotSongsSection({
+    required this.sourceId,
+    required this.boardId,
+    required this.boardName,
+  });
+  final String? sourceId;
   final String boardId;
   final String boardName;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final lx = ref.watch(sourceRegistryProvider).activeRuntime;
+    final reg = ref.watch(sourceRegistryProvider);
+    final lx = sourceId == null ? null : reg.runtimeOf(sourceId!);
     if (lx == null) return const SizedBox.shrink();
     return FutureBuilder<List<MusicInfo>?>(
       future: lx.boardSongsFromScript(boardId, limit: 10),

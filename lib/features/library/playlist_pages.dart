@@ -171,7 +171,7 @@ class PlaylistsStrip extends ConsumerStatefulWidget {
 
 class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
   String _query = '';
-  bool _expanded = false;
+  final Set<String> _expandedFolders = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -180,24 +180,73 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
 
     final sorted = service.sorted;
     final q = _query.trim().toLowerCase();
-    final visible = q.isEmpty
-        ? sorted
+    final grouped = service.grouped;
+
+    // 搜索时退化为平铺结果（便于快速定位），否则按文件夹分组
+    final searchHits = q.isEmpty
+        ? <Playlist>[]
         : [
             for (final p in sorted)
               if (p.name.toLowerCase().contains(q)) p,
           ];
 
-    // 超过 6 个才显示搜索框（少量歌单时没必要占地方）
     final showSearch = sorted.length > 6;
-    // 默认最多显示 6 条，避免歌单多时把本机歌曲挤到很下面
-    const collapsedCount = 6;
-    final needCollapse = visible.length > collapsedCount;
-    final shown = _expanded || q.isNotEmpty
-        ? visible
-        : visible.take(collapsedCount).toList();
+
+    // 分组渲染顺序：未分组在前，其次各文件夹（保持首次出现顺序）
+    final folderKeys = <String?>[
+      if (grouped.containsKey(null)) null,
+      for (final f in service.folders)
+        if (grouped.containsKey(f)) f,
+    ];
+
+    Widget tileFor(Playlist p) => SizedBox(
+          height: 56,
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            // 性能：12 个歌单各下一张网络封面会让首帧掉到秒级，
+            // 歌单条目用图标占位即可。
+            leading: Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                color: scheme.surfaceContainerHighest,
+              ),
+              child: Icon(
+                p.system ? Icons.star_outline : Icons.queue_music,
+                size: 20,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            title: Text(p.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14)),
+            subtitle: Text('${p.entries.length} 首',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+              // 移动到文件夹 / 移出文件夹
+              IconButton(
+                tooltip: p.folder == null ? '移到文件夹' : '移出文件夹',
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  p.folder == null ? Icons.drive_file_move_outline : Icons.folder_off_outlined,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                onPressed: () => _moveToFolder(p),
+              ),
+              Icon(Icons.chevron_right,
+                  size: 18, color: scheme.onSurfaceVariant),
+            ]),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => PlaylistDetailPage(playlistId: p.id))),
+          ),
+        );
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // —— 标题栏：歌单数 + 导入/新建 ——
+      // —— 标题栏：歌单数 + 新建文件夹 + 导入/新建歌单 ——
       Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: Row(children: [
@@ -210,6 +259,12 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
           Text('${sorted.length}',
               style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
           const Spacer(),
+          IconButton(
+            tooltip: '新建文件夹',
+            onPressed: _createFolder,
+            icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+            visualDensity: VisualDensity.compact,
+          ),
           IconButton(
             tooltip: '导入歌单',
             onPressed: () => _importPlaylistFile(context, ref),
@@ -225,7 +280,6 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
         ]),
       ),
 
-      // —— 搜索（歌单多时出现）——
       if (showSearch)
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
@@ -251,58 +305,136 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
           child: Text('还没有歌单，新建一个或导入 M3U',
               style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12)),
         )
-      else ...[
-        // —— 纵向列表 ——
-        for (final p in shown)
-          SizedBox(
-            // ListTile 在无约束 Column 里会反复触发布局：
-            // 显式高度锁死（dense ListTile 的标准高度 56）
-            height: 56,
-            child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            // 性能：12 个歌单各下一张网络封面会让首帧掉到秒级
-            // （实测 850ms/帧）。歌单条目用图标占位即可，不逐条拉图。
-            leading: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: scheme.surfaceContainerHighest,
-              ),
-              child: Icon(
-                p.system ? Icons.star_outline : Icons.queue_music,
-                size: 20,
-                color: scheme.onSurfaceVariant,
-              ),
+      else if (q.isNotEmpty) ...[
+        // 搜索结果：平铺
+        if (searchHits.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Text('没有匹配「$_query」的歌单',
+                style: TextStyle(
+                    color: scheme.onSurfaceVariant, fontSize: 12)),
+          )
+        else
+          for (final p in searchHits) tileFor(p),
+      ] else ...[
+        // 分组渲染
+        for (final f in folderKeys) ...[
+          if (f == null) ...[
+            for (final p in grouped[null]!) tileFor(p),
+          ] else
+            _FolderSection(
+              name: f,
+              count: grouped[f]!.length,
+              initiallyExpanded: _expandedFolders.contains(f),
+              onToggle: () => setState(() {
+                if (!_expandedFolders.remove(f)) _expandedFolders.add(f);
+              }),
+              onRemove: () => _confirmRemoveFolder(f),
+              children: [
+                if (_expandedFolders.contains(f))
+                  for (final p in grouped[f]!)
+                    if (!(p.name == '（空文件夹）' && p.entries.isEmpty))
+                      tileFor(p),
+              ],
             ),
-            title: Text(p.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 14)),
-            subtitle: Text('${p.entries.length} 首',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
-            trailing: Icon(Icons.chevron_right,
-                size: 18, color: scheme.onSurfaceVariant),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => PlaylistDetailPage(playlistId: p.id))),
-          ),
-          ),
-
-        // —— 展开/收起 ——
-        if (needCollapse)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () => setState(() => _expanded = !_expanded),
-              child: Text(
-                _expanded ? '收起' : '显示全部 ${visible.length} 个歌单',
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-          ),
+        ],
       ],
     ]);
+  }
+
+  // ————————————————— 文件夹操作 —————————————————
+
+  Future<void> _createFolder() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('新建文件夹'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '文件夹名称，如「李泽鹏」'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
+              child: const Text('创建')),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    ref.read(playlistsProvider).ensureFolder(name);
+    if (mounted) setState(() => _expandedFolders.add(name));
+  }
+
+  Future<void> _moveToFolder(Playlist p) async {
+    final service = ref.read(playlistsProvider);
+    if (p.folder != null) {
+      service.setFolder(p.id, null);
+      if (mounted) setState(() {});
+      return;
+    }
+    final folders = service.folders;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text('「${p.name}」移到…',
+                style: Theme.of(context).textTheme.titleMedium),
+          ),
+          for (final f in folders)
+            ListTile(
+              leading: const Icon(Icons.folder_outlined, size: 20),
+              title: Text(f),
+              onTap: () => Navigator.of(context).pop(f),
+            ),
+          ListTile(
+            leading: const Icon(Icons.create_new_folder_outlined, size: 20),
+            title: const Text('新建文件夹…'),
+            onTap: () => Navigator.of(context).pop('__new__'),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (picked == null) return;
+    if (picked == '__new__') {
+      await _createFolder();
+      final latest = service.folders;
+      if (latest.isEmpty) return;
+      service.setFolder(p.id, latest.last);
+    } else {
+      service.setFolder(p.id, picked);
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _confirmRemoveFolder(String name) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除文件夹「$name」？'),
+        content: const Text('文件夹里的歌单会回到顶层，歌单本身不会被删除。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除文件夹')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      ref.read(playlistsProvider).removeFolder(name);
+      if (mounted) setState(() => _expandedFolders.remove(name));
+    }
   }
 
   Future<void> _create(BuildContext context, WidgetRef ref) async {
@@ -311,21 +443,24 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('新建歌单'),
-        content: TextField(controller: controller, autofocus: true,
+        content: TextField(
+            controller: controller,
+            autofocus: true,
             decoration: const InputDecoration(hintText: '歌单名称')),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('取消')),
           FilledButton(
-              onPressed: () => Navigator.of(context).pop(controller.text),
+              onPressed: () =>
+                  Navigator.of(context).pop(controller.text.trim()),
               child: const Text('创建')),
         ],
       ),
     );
-    if (name != null && name.trim().isNotEmpty) {
-      ref.read(playlistsProvider).create(name);
-    }
+    if (name == null || name.isEmpty) return;
+    ref.read(playlistsProvider).create(name);
+    if (mounted) setState(() {});
   }
 
   Future<void> _importPlaylistFile(BuildContext context, WidgetRef ref) async {
@@ -394,39 +529,31 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
         content: Text('导入 ${entries.length} 首：已匹配 $matched${pending > 0 ? '，未匹配 $pending（需支持搜索的音源）' : ''}')));
   }
 
+  /// lx 导入时给待匹配条目（sourceId='pending'）找真实音源并回填。
   Future<int> _matchEntries(NavigatorState rootNavigator, WidgetRef ref,
       String playlistId, List<PlaylistEntry> entries) async {
     final service = ref.read(playlistsProvider);
     final lx = ref.read(sourceRegistryProvider).activeRuntime;
     if (lx == null) return 0;
-
-    var matched = 0;
     var cancelled = false;
-    // 进度弹窗
-    showDialog<void>(
-      context: rootNavigator.context,
+    rootNavigator.push(PageRouteBuilder<void>(
+      opaque: false,
       barrierDismissible: false,
-      builder: (dialogCtx) => StatefulBuilder(
-        builder: (dialogCtx, setDialogState) => AlertDialog(
-          title: const Text('正在匹配歌曲'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            LinearProgressIndicator(value: entries.isEmpty ? 0 : matched / entries.length),
-            const SizedBox(height: 12),
-            Text('$matched / ${entries.length}'),
-          ]),
-          actions: [
-            TextButton(
-                onPressed: () {
-                  cancelled = true;
-                  Navigator.of(dialogCtx).pop();
-                },
-                child: const Text('停止')),
-          ],
+      pageBuilder: (_, _, _) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 12),
+              Text('正在为歌单曲目匹配音源…', style: TextStyle(fontSize: 13)),
+            ]),
+          ),
         ),
       ),
-    );
-
-    final pl = service.playlists.where((x) => x.id == playlistId).firstOrNull;
+    ));
+    var matched = 0;
+    final pl = service.byId(playlistId);
     if (pl == null) return 0;
     final fresh = pl.entries; // 与刚创建一致
     for (var i = 0; i < fresh.length && i < entries.length && !cancelled; i++) {
@@ -515,4 +642,60 @@ Future<void> showAddToPlaylistSheet(
       ]),
     ),
   );
+}
+
+/// 文件夹分组：可折叠，头部显示名称 + 歌单数 + 删除。
+class _FolderSection extends StatelessWidget {
+  const _FolderSection({
+    required this.name,
+    required this.count,
+    required this.initiallyExpanded,
+    required this.onToggle,
+    required this.onRemove,
+    required this.children,
+  });
+  final String name;
+  final int count;
+  final bool initiallyExpanded;
+  final VoidCallback onToggle;
+  final VoidCallback onRemove;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      InkWell(
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(children: [
+            Icon(initiallyExpanded ? Icons.folder_open : Icons.folder,
+                size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Text(name,
+                style: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 6),
+            Text('$count',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+            const Spacer(),
+            IconButton(
+              tooltip: '删除文件夹',
+              visualDensity: VisualDensity.compact,
+              icon: Icon(Icons.delete_outline,
+                  size: 16, color: scheme.onSurfaceVariant),
+              onPressed: onRemove,
+            ),
+            Icon(initiallyExpanded ? Icons.expand_less : Icons.expand_more,
+                size: 18, color: scheme.onSurfaceVariant),
+          ]),
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(left: 12),
+        child: Column(children: children),
+      ),
+    ]);
+  }
 }

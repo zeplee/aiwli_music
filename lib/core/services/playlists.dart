@@ -68,6 +68,9 @@ class PlaylistEntry {
       };
 }
 
+/// copyWith 用哨兵区分「参数未传」与「显式置为 null」。
+const Object _unset = Object();
+
 class Playlist {
   const Playlist({
     required this.id,
@@ -75,6 +78,7 @@ class Playlist {
     required this.createdAtMs,
     this.entries = const [],
     this.system = false,
+    this.folder,
   });
   final String id;
   final String name;
@@ -85,12 +89,23 @@ class Playlist {
   /// 目前只有「我的收藏」一个（取代原先独立的 favorites 存储）。
   final bool system;
 
-  Playlist copyWith({String? name, List<PlaylistEntry>? entries}) => Playlist(
+  /// 所属文件夹名（null = 未分组，直接显示在顶层）。
+  /// 用途：按人/场景分组，例如「李泽鹏」文件夹下放他的收藏与歌单。
+  final String? folder;
+
+  Playlist copyWith({
+    String? name,
+    List<PlaylistEntry>? entries,
+    Object? folder = _unset,
+  }) =>
+      Playlist(
         id: id,
         name: name ?? this.name,
         createdAtMs: createdAtMs,
         entries: entries ?? this.entries,
         system: system,
+        // 用哨兵区分「不改」与「置空」
+        folder: identical(folder, _unset) ? this.folder : folder as String?,
       );
 
   factory Playlist.fromJson(Map<Object?, Object?> m) => Playlist(
@@ -98,6 +113,7 @@ class Playlist {
         name: '${m['name'] ?? ''}',
         createdAtMs: (m['createdAtMs'] as num?)?.toInt() ?? 0,
         system: m['system'] == true,
+        folder: m['folder'] as String?,
         entries: ((m['entries'] as List?) ?? const [])
             .map((e) => PlaylistEntry.fromJson(e as Map))
             .toList(),
@@ -109,6 +125,7 @@ class Playlist {
         'createdAtMs': createdAtMs,
           'entries': entries.map((e) => e.toJson()).toList(),
         if (system) 'system': true,
+        if (folder != null) 'folder': folder,
       };
 }
 
@@ -188,6 +205,74 @@ class PlaylistService extends SafeNotifier {
     playlists = [
       for (final p in playlists)
         if (p.id == id) p.copyWith(name: name.trim()) else p
+    ];
+    unawaitedPersist();
+  }
+
+  // ————————————————— 文件夹 —————————————————
+
+  /// 所有文件夹名（去重、按首次出现顺序）。
+  List<String> get folders {
+    final seen = <String>[];
+    for (final p in playlists) {
+      final f = p.folder;
+      if (f != null && f.trim().isNotEmpty && !seen.contains(f)) seen.add(f);
+    }
+    return seen;
+  }
+
+  /// 分组视图：folder -> 该文件夹下的歌单；null 键 = 顶层未分组。
+  Map<String?, List<Playlist>> get grouped {
+    final map = <String?, List<Playlist>>{};
+    for (final p in sorted) {
+      map.putIfAbsent(p.folder, () => []).add(p);
+    }
+    return map;
+  }
+
+  Playlist? byId(String id) =>
+      playlists.where((p) => p.id == id).firstOrNull;
+
+  void setFolder(String playlistId, String? folder) {
+    final f = (folder == null || folder.trim().isEmpty) ? null : folder.trim();
+    playlists = [
+      for (final p in playlists)
+        if (p.id == playlistId) p.copyWith(folder: f) else p
+    ];
+    unawaitedPersist();
+  }
+
+  /// 新建文件夹（空文件夹也要能存在，所以用一个占位歌单承载）。
+  /// 已存在则忽略。
+  String ensureFolder(String name) {
+    final n = name.trim();
+    if (n.isEmpty) return n;
+    if (folders.contains(n)) return n;
+    // 用空歌单占位：让 folders 能列出它，用户可后续往里放歌单
+    final placeholder = Playlist(
+      id: 'pl_${DateTime.now().microsecondsSinceEpoch}_holder',
+      name: '（空文件夹）',
+      createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      folder: n,
+    );
+    playlists = [...playlists, placeholder];
+    unawaitedPersist();
+    return n;
+  }
+
+  /// 删除文件夹：其下歌单回到顶层（不删歌单本身）。
+  void removeFolder(String name) {
+    playlists = [
+      for (final p in playlists)
+        if (p.folder == name) p.copyWith(folder: null) else p
+    ];
+    // 顺带清掉空占位
+    playlists = [
+      for (final p in playlists)
+        if (!(p.folder == null &&
+            p.name == '（空文件夹）' &&
+            p.entries.isEmpty))
+          p
     ];
     unawaitedPersist();
   }
