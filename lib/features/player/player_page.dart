@@ -12,11 +12,19 @@ import 'player_extras.dart';
 import '../library/playlist_pages.dart';
 import '../../core/services/playlists.dart';
 
-class PlayerPage extends ConsumerWidget {
+class PlayerPage extends ConsumerStatefulWidget {
   const PlayerPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PlayerPage> createState() => _PlayerPageState();
+}
+
+class _PlayerPageState extends ConsumerState<PlayerPage> {
+  /// 上一次已提示过的错误（同一错误不重复弹 SnackBar）。
+  Object? _lastShownError;
+
+  @override
+  Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
     final favorites = ref.watch(favoritesProvider);
     final settings = ref.watch(appSettingsProvider);
@@ -31,6 +39,23 @@ class PlayerPage extends ConsumerWidget {
         child: ValueListenableBuilder<PlayerUiState>(
           valueListenable: core.state,
           builder: (context, s, _) {
+            // 错误改成底部浮层：只在真正失败时弹一次，不占布局高度，
+            // 也不复述 mpv 英文原文（用户不需要看 "Failed to..."）。
+            if (s.error != null && s.error != _lastShownError) {
+              _lastShownError = s.error;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                final messenger = ScaffoldMessenger.maybeOf(context);
+                messenger
+                  ?..hideCurrentSnackBar()
+                  ..showSnackBar(SnackBar(
+                    content: const Text('这首暂时播不了，已自动换源重试'),
+                    duration: const Duration(seconds: 3),
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                  ));
+              });
+            }
             final duration =
                 s.duration ?? const Duration(minutes: 3, seconds: 30);
             final pos = s.position <= duration ? s.position : duration;
@@ -206,36 +231,30 @@ class PlayerPage extends ConsumerWidget {
                             : scheme.onSurfaceVariant),
                   ),
                 ]),
-                // 取链/加载中提示：切歌后可能等待数秒，必须让用户看到进度
-                if (s.processing == EngineProcessing.loading ||
-                    s.processing == EngineProcessing.buffering)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: scheme.primary),
-                        ),
-                        const SizedBox(width: 8),
-                        Text('正在获取播放地址…',
-                            style: TextStyle(
-                                color: scheme.primary, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                if (s.error != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text('${s.error}',
-                        style: TextStyle(color: scheme.error, fontSize: 12),
-                        textAlign: TextAlign.center,
-                        maxLines: 3),
-                  ),
-                const SizedBox(height: 12),
+                // 加载提示：固定高度占位，出现/消失不推挤布局
+                // （之前是条件插入 Row，导致整个页面上下伸缩）
+                SizedBox(
+                  height: 24,
+                  child: (s.processing == EngineProcessing.loading ||
+                          s.processing == EngineProcessing.buffering)
+                      ? Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: scheme.primary),
+                            ),
+                            const SizedBox(width: 8),
+                            Text('正在获取播放地址…',
+                                style: TextStyle(
+                                    color: scheme.primary, fontSize: 12)),
+                          ],
+                        )
+                      : null,
+                ),
+                const SizedBox(height: 4),
               ]),
             );
           },
@@ -555,7 +574,9 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
           Icon(Icons.chat_bubble_outline,
               size: 36, color: scheme.onSurfaceVariant),
           const SizedBox(height: 8),
-          Text(state.error ?? '暂无评论',
+          Text(state.error == null || state.error!.isEmpty
+              ? '暂无评论'
+              : '评论加载失败 · 换个音源试试',
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
         ]),
       );

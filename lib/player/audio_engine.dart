@@ -27,6 +27,10 @@ abstract interface class AudioEngine {
   /// 快速切歌时旧歌的迟到事件会在新歌 load 之后到达——
   /// 上层用 currentSource 比对，丢弃不属于当前曲目的陈旧事件。
   Uri? get currentSource;
+
+  /// 最近一次被忽略的非致命警告（如 "Failed to recognize file format"）。
+  /// 这类消息 mpv 会报，但音频通常仍能正常播放，不应展示给用户。
+  String? get lastWarning;
 }
 
 /// M0/测试用空引擎：所有调用即记即忘，不发声。
@@ -53,4 +57,6 @@ class StubEngine implements AudioEngine {
   EngineSnapshot get current => const EngineSnapshot();
   @override
   Uri? get currentSource => null;
+  @override
+  String? get lastWarning => null;
 }

@@ -18,6 +18,19 @@ class LyricsPanel extends ConsumerStatefulWidget {
   ConsumerState<LyricsPanel> createState() => _LyricsPanelState();
 }
 
+/// 歌词空态文案：不把异常原文甩给用户（"SocketException: ... " 这类）。
+String _lyricEmptyText(String? error) {
+  if (error == null || error.isEmpty) return '暂无歌词 · 点按查看';
+  final lower = error.toLowerCase();
+  if (lower.contains('timeout') || lower.contains('socket')) {
+    return '歌词获取超时 · 点按重试';
+  }
+  if (lower.contains('404') || lower.contains('not found')) {
+    return '这首歌没有歌词 · 点按查看';
+  }
+  return '暂无歌词 · 点按查看';
+}
+
 class _LyricsPanelState extends ConsumerState<LyricsPanel> {
   String? _lastFetchedKey;
 
@@ -69,7 +82,7 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
         }
         if (doc == null || doc.lines.isEmpty) {
           return _tappable(context,
-              child: Text(lyric.current.error ?? '暂无歌词 · 点按查看',
+              child: Text(_lyricEmptyText(lyric.current.error),
                   style: TextStyle(
                       color: scheme.onSurfaceVariant, fontSize: 13)));
         }
@@ -270,7 +283,7 @@ class _FullLyricsPageState extends ConsumerState<FullLyricsPage> {
           const SizedBox(height: 12),
           Text(lyric.current.loading
                   ? '歌词加载中…'
-                  : lyric.current.error ?? '暂无歌词',
+                  : _lyricEmptyText(lyric.current.error),
               style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                   fontSize: 14)),

@@ -69,6 +69,9 @@ class PlayerUiState {
     String? title,
     String? artist,
     Object? error,
+    /// 显式清空错误。copyWith 无法用 null 表达"清空"（null 表示"不改"），
+    /// 否则一旦报过错就永远挂着红字——这正是"播放成功仍显示错误"的根因。
+    bool clearError = false,
     RepeatMode? repeatMode,
     bool? shuffleOn,
     double? speed,
@@ -80,7 +83,7 @@ class PlayerUiState {
       duration: duration ?? this.duration,
       title: title ?? this.title,
       artist: artist ?? this.artist,
-      error: error,
+      error: clearError ? null : (error ?? this.error),
       repeatMode: repeatMode ?? this.repeatMode,
       shuffleOn: shuffleOn ?? this.shuffleOn,
       speed: speed ?? this.speed,

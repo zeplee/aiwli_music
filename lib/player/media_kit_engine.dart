@@ -8,16 +8,70 @@ import 'models.dart';
 class MediaKitEngine implements AudioEngine {
   MediaKitEngine._(this._player) {
     _subs.addAll([
-      _player.stream.playing.listen((p) => _emit(playing: p)),
+      _player.stream.playing.listen((p) => _emit(playing: p, clearError: p)),
       _player.stream.completed.listen((c) {
         if (c) _emit(processing: EngineProcessing.completed, playing: false);
       }),
-      _player.stream.position.listen((pos) => _emit(position: pos)),
+      _player.stream.position.listen((pos) {
+        // 进度在走 = 音频确实在播；此时任何残留错误都应清掉
+        _emit(position: pos, clearError: true);
+      }),
       _player.stream.duration.listen((d) => _emit(duration: d)),
       _player.stream.buffer.listen((b) => _emit(buffered: b)),
-      _player.stream.error.listen((e) =>
-          _emit(processing: EngineProcessing.error, playing: false, error: e)),
+      _player.stream.error.listen(_onPlayerError),
     ]);
+  }
+
+  /// mpv 会把大量**非致命**问题也塞进 error 流（"Failed to recognize file
+  /// format" 常见于 HLS/无扩展名流，实际已能正常出声）。把这些当致命错误
+  /// 上报，就会造成「正在播放 + 底部报红字」并存。
+  /// 只保留真正导致无法播放的错误类型。
+  void _onPlayerError(String e) {
+    final fatal = isFatalError(e);
+    if (!fatal) {
+      // 非致命：记日志即可，不污染 UI 状态
+      _lastWarning = e;
+      // ignore: avoid_print
+      print('[MediaKitEngine] 忽略非致命警告: $e');
+      return;
+    }
+    _emit(processing: EngineProcessing.error, playing: false, error: e);
+  }
+
+  /// 最近一次被忽略的非致命警告（排障用）。
+  String? _lastWarning;
+  @override
+  String? get lastWarning => _lastWarning;
+
+  /// 判断 mpv 错误是否致命（公开用于测试；生产逻辑只经由 [_onPlayerError]）。
+  static bool isFatalError(String e) => _isFatal(e);
+
+  static bool _isFatal(String e) {
+    final lower = e.toLowerCase();
+    // 明确无法打开/解码 → 致命（这些确实放不出声）
+    const fatalMarkers = [
+      'failed to open',
+      'failed to initialize',
+      'no audio or video data',
+      'cannot open',
+      'unable to open',
+      'failed to decode audio',
+      'error opening',
+      'unsupported',
+      'http error',
+      '403 forbidden',
+      '404 not found',
+    ];
+    // 只是"识别不出容器/格式"，但 mpv 仍能播出声音 → 非致命
+    const benignMarkers = [
+      'failed to recognize file format',
+      'could not recognize',
+      'unknown format',
+      'no extension',
+      'unrecognized',
+    ];
+    if (benignMarkers.any(lower.contains)) return false;
+    return fatalMarkers.any(lower.contains);
   }
 
   static bool _initialized = false;
@@ -49,6 +103,8 @@ class MediaKitEngine implements AudioEngine {
     Duration? buffered,
     double? speed,
     Object? error,
+    /// true 表示显式把错误清空（播放恢复后必须清，否则红字永远挂在那）。
+    bool clearError = false,
   }) {
     _snapshot = EngineSnapshot(
       processing: processing ?? _snapshot.processing,
@@ -57,7 +113,7 @@ class MediaKitEngine implements AudioEngine {
       duration: duration ?? _snapshot.duration,
       buffered: buffered ?? _snapshot.buffered,
       speed: speed ?? _snapshot.speed,
-      error: error ?? _snapshot.error,
+      error: clearError ? null : (error ?? _snapshot.error),
     );
     if (!_controller.isClosed) _controller.add(_snapshot);
   }

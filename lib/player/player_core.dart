@@ -250,7 +250,10 @@ class PlayerCore {
       playing: snap.playing,
       position: snap.position,
       duration: snap.duration,
+      // 引擎快照没有错误 = 当前健康；必须清掉旧错误，
+      // 否则「播放正常但底部一直红字」。
       error: snap.error,
+      clearError: snap.error == null,
     );
     if (snap.processing == EngineProcessing.completed && _expectCompletion) {
       _expectCompletion = false;
