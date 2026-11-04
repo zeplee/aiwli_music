@@ -5,6 +5,7 @@ import '../../../app_providers.dart';
 import '../../../core/ui/cover_image.dart';
 import '../../../core/models/music.dart';
 import '../../../player/player_core.dart';
+import '../library/playlist_pages.dart';
 import '../player/player_page.dart';
 import 'board_songs_page.dart';
 
@@ -45,7 +46,7 @@ class DiscoverPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final core = ref.watch(playerCoreProvider);
-    final favorites = ref.watch(playlistsProvider).favorites;
+    final playlists = ref.watch(playlistsProvider).sorted;
     // 「继续聆听」用真实播放历史（之前只显示当前一首，形同虚设）
     final history = ref.watch(playHistoryProvider).items;
     final recent = [
@@ -177,38 +178,39 @@ class DiscoverPage extends ConsumerWidget {
               ]);
             },
           ),
-        // —— 我的收藏 ——
-        if (favorites != null && favorites.entries.isNotEmpty) ...[
-          _SectionHeader('我的收藏 · ${favorites.entries.length} 首'),
-          for (final f in favorites.entries.take(3))
+        // —— 我的歌单 ——
+        // 「收藏」概念已移除（对齐 lx / 栖弦：只有歌单）。这里展示歌单入口，
+        // 系统歌单（原收藏）仍是其中之一，但不再用爱心图标表达。
+        if (playlists.isNotEmpty) ...[
+          const _SectionHeader('我的歌单'),
+          for (final p in playlists.take(3))
             ListTile(
-              leading: CoverImage(url: f.picUrl, size: 44, icon: Icons.favorite),
-              title: Text(f.title,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(f.artist,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              trailing: const Icon(Icons.favorite, color: Color(0xFFE57373)),
-              // 点击播放：把整个收藏列表入队，从这一首开始
-              onTap: () {
-                final favItems = [
-                  for (final x in favorites.entries)
-                    PlayerItem(
-                      title: x.title,
-                      artist: x.artist,
-                      sourceId: x.sourceId,
-                      musicId: x.musicId,
-                      album: x.album,
-                      duration: x.durationMs == null
-                          ? null
-                          : Duration(milliseconds: x.durationMs!),
-                    ),
-                ];
-                final idx = favorites.entries.indexOf(f);
-                core.setQueue(favItems, index: idx < 0 ? 0 : idx);
-                Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => const PlayerPage()));
-              },
+              leading: CoverImage(
+                url: p.entries.isNotEmpty ? p.entries.first.picUrl : null,
+                size: 44,
+                icon: Icons.queue_music,
+              ),
+              title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text('${p.entries.length} 首'),
+              trailing: Icon(Icons.chevron_right,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => PlaylistDetailPage(playlistId: p.id))),
             ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () {
+                  // 音乐库 Tab 里有完整歌单管理
+                  Navigator.of(context).maybePop();
+                },
+                child: const Text('全部歌单 ›', style: TextStyle(fontSize: 12)),
+              ),
+            ),
+          ),
         ],
         // —— 继续聆听 ——
         if (recent.isNotEmpty) ...[

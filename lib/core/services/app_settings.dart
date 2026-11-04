@@ -29,6 +29,8 @@ class AppSettings extends SafeNotifier {
     }
     eqEnabled = m['eqEnabled'] == true;
     sleepTimerMinutes = (m['sleepTimerMinutes'] as num?)?.toInt() ?? 30;
+    songSort = m['songSort'] as String? ?? 'title';
+    songSortAscending = m['songSortAscending'] != false;
     lyricTranslation = m['lyricTranslation'] != false;
     lyricRoman = m['lyricRoman'] != false;
     eqPreset = m['eqPreset'] as String? ?? 'flat';
@@ -48,6 +50,8 @@ class AppSettings extends SafeNotifier {
         'lyricTranslation': lyricTranslation,
         'lyricRoman': lyricRoman,
         'sleepTimerMinutes': sleepTimerMinutes,
+        'songSort': songSort,
+        'songSortAscending': songSortAscending,
       });
 
   Future<void> setLyricPrefs({bool? translation, bool? roman}) async {
@@ -59,6 +63,17 @@ class AppSettings extends SafeNotifier {
 
   /// 睡眠定时默认时长（分钟），0 表示不记忆。
   int sleepTimerMinutes = 30;
+
+  /// 音乐库排序偏好（对齐参考工程：排序方式也需跨会话记忆）。
+  String songSort = 'title';
+  bool songSortAscending = true;
+
+  Future<void> setSongSort(String sort, bool ascending) async {
+    songSort = sort;
+    songSortAscending = ascending;
+    notifyListeners();
+    await _flush();
+  }
 
   Future<void> setSleepTimerMinutes(int v) async {
     sleepTimerMinutes = v;

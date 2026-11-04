@@ -52,9 +52,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final sleep = ref.watch(sleepTimerProvider);
     final scheme = Theme.of(context).colorScheme;
     final item = core.current;
-    // 收藏 = 「我的收藏」系统歌单里的成员（不再有独立的 favorites 存储）
-    final isFav =
-        item != null && playlists.isFavorite(item.sourceId, item.musicId);
+    // 是否已在任一歌单中（仅用于图标状态提示，不再有"收藏"概念）
+    final inAnyPlaylist = item != null &&
+        playlists.playlists.any((p) => p.entries.any(
+            (e) => e.sourceId == item.sourceId && e.musicId == item.musicId));
 
     return CallbackShortcuts(
       bindings: {
@@ -201,21 +202,21 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                       ),
                     ],
                   ),
+                  // 「添加到歌单」（取代原爱心按钮）。
+                  // lx 与栖弦都没有"收藏"这个概念，只有歌单；
+                  // 若已在任一歌单里，图标高亮提示。
                   IconButton(
-                    tooltip: isFav ? '已收藏 · 点击取消' : '收藏到「我的收藏」',
+                    tooltip: '添加到歌单',
                     onPressed: item == null
                         ? null
-                        : () => playlists.toggleFavorite(PlaylistEntry(
-                              sourceId: item.sourceId,
-                              musicId: item.musicId,
-                              title: item.title,
-                              artist: item.artist,
-                              album: item.album,
-                              durationMs: item.duration?.inMilliseconds,
-                            )),
+                        : () => showAddToPlaylistSheet(context, ref, item.toEntry()),
                     icon: Icon(
-                      isFav ? Icons.favorite : Icons.favorite_border,
-                      color: isFav ? scheme.error : scheme.onSurfaceVariant,
+                      inAnyPlaylist
+                          ? Icons.playlist_add_check
+                          : Icons.playlist_add,
+                      color: inAnyPlaylist
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
                     ),
                   ),
                 ]),

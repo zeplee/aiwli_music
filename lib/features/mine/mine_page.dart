@@ -6,6 +6,7 @@ import '../../core/ui/cover_image.dart';
 import '../../player/models.dart';
 import '../player/player_page.dart';
 import '../downloads/downloads_page.dart';
+import '../library/library_page.dart';
 import '../library/recent_page.dart';
 import 'webdav_page.dart';
 import 'source_manage_page.dart';
@@ -17,8 +18,9 @@ class MinePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final registry = ref.watch(sourceRegistryProvider);
-    final favCount =
-        ref.watch(playlistsProvider).favorites?.entries.length ?? 0;
+    final plService = ref.watch(playlistsProvider);
+    final favCount = plService.favorites?.entries.length ?? 0;
+    final playlistCount = plService.playlists.length;
     final webdav = ref.watch(webDavServiceProvider);
 
     return Scaffold(
@@ -119,11 +121,11 @@ class MinePage extends ConsumerWidget {
               builder: (_) => const SourceManagePage())),
         ),
         ListTile(
-          leading: const Icon(Icons.favorite),
-          title: const Text('我的收藏'),
-          subtitle: Text('$favCount 首'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: null, // 收藏列表页待 M4 后期；数据已在 WebDAV 备份内
+          leading: const Icon(Icons.library_music_outlined),
+          title: const Text('我的歌单'),
+          subtitle: Text('$playlistCount 个 · 共 $favCount 首'),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const LibraryPage())),
         ),
         ListTile(
           leading: const Icon(Icons.cloud_sync_outlined),

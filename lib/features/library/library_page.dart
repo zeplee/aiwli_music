@@ -4,16 +4,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:on_audio_query_pluse/on_audio_query.dart';
 
+import '../../app_providers.dart';
 import '../../core/services/playlists.dart';
+import '../../core/ui/cover_image.dart';
 import '../../player/models.dart';
 import '../../player/player_core.dart';
-import '../../core/ui/cover_image.dart';
-import '../../app_providers.dart';
 import '../player/player_page.dart';
 import 'playlist_pages.dart';
 
-final _audioQuery = OnAudioQuery();
+/// 本地曲库排序维度（对齐参考工程 lx 的 MusicSortModal / 栖弦 SongSortMode）。
+enum SongSort { title, artist, album, duration, added }
 
+extension on SongSort {
+  String get label => switch (this) {
+        SongSort.title => '歌曲名',
+        SongSort.artist => '歌手',
+        SongSort.album => '专辑',
+        SongSort.duration => '时长',
+        SongSort.added => '添加时间',
+      };
+
+  IconData get icon => switch (this) {
+        SongSort.title => Icons.sort_by_alpha,
+        SongSort.artist => Icons.person_outline,
+        SongSort.album => Icons.album_outlined,
+        SongSort.duration => Icons.timer_outlined,
+        SongSort.added => Icons.schedule,
+      };
+}
+
+/// 音乐库：歌单条 + 本机歌曲（页内搜索 / 排序 / 批量选择 / 当前曲高亮）。
 class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
 
@@ -22,18 +42,56 @@ class LibraryPage extends ConsumerStatefulWidget {
 }
 
 class _LibraryPageState extends ConsumerState<LibraryPage> {
+  final _audioQuery = OnAudioQuery();
   List<SongModel>? _songs;
-
-  /// albumId → 封面字节缓存。queryArtwork 是平台调用，
-  /// 必须缓存，否则列表滚动会反复解码。
-  final Map<int, Uint8List?> _artCache = {};
   String? _error;
+
+  /// albumId → 封面字节缓存（queryArtwork 是平台调用，必须缓存）。
+  final Map<int, Uint8List?> _artCache = {};
+
+  // —— 搜索 ——
+  bool _searchMode = false;
+  String _query = '';
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
+
+  // —— 排序（持久化）——
+  SongSort _sort = SongSort.title;
+  bool _ascending = true;
+
+  // —— 批量选择 ——
+  bool _batchMode = false;
+  final Set<int> _selected = {};
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _restoreSortPrefs();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _restoreSortPrefs() async {
+    final s = ref.read(appSettingsProvider);
+    final sortName = s.songSort;
+    final asc = s.songSortAscending;
+    if (mounted) {
+      setState(() {
+        _sort = SongSort.values.firstWhere((v) => v.name == sortName,
+            orElse: () => SongSort.title);
+        _ascending = asc;
+      });
+    }
+  }
+
+  Future<void> _persistSort() =>
+      ref.read(appSettingsProvider).setSongSort(_sort.name, _ascending);
 
   Future<void> _load() async {
     try {
@@ -45,7 +103,10 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
       }
       final songs = await _audioQuery.querySongs();
       if (!mounted) return;
-      setState(() => _songs = songs);
+      setState(() {
+        _songs = songs;
+        _error = null;
+      });
       _loadArtwork(songs);
     } catch (e) {
       if (!mounted) return;
@@ -82,17 +143,176 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     return id > 0 ? _artCache[id] : null;
   }
 
-  void _play(List<PlayerItem> items, int index) {
+  /// 搜索 + 排序后的可见列表。
+  List<SongModel> get _visible {
+    final all = _songs ?? const <SongModel>[];
+    var list = all;
+    final q = _query.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      list = [
+        for (final s in all)
+          if (s.title.toLowerCase().contains(q) ||
+              (s.artist ?? '').toLowerCase().contains(q) ||
+              (s.album ?? '').toLowerCase().contains(q))
+            s,
+      ];
+    }
+    final sorted = [...list];
+    int cmp(SongModel a, SongModel b) => switch (_sort) {
+          SongSort.title =>
+            a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+          SongSort.artist =>
+            (a.artist ?? '').toLowerCase().compareTo((b.artist ?? '').toLowerCase()),
+          SongSort.album =>
+            (a.album ?? '').toLowerCase().compareTo((b.album ?? '').toLowerCase()),
+          SongSort.duration =>
+            (a.duration ?? 0).compareTo(b.duration ?? 0),
+          SongSort.added => (a.dateAdded ?? 0).compareTo(b.dateAdded ?? 0),
+        };
+    sorted.sort(_ascending ? cmp : (a, b) => cmp(b, a));
+    return sorted;
+  }
+
+  /// 转成歌单条目（不含 resolvedUrl：歌单按 sourceId+musicId 走取链）。
+  PlaylistEntry _toEntry(SongModel s) => PlaylistEntry(
+        sourceId: 'local',
+        musicId: '${s.id}',
+        title: s.title,
+        artist: s.artist ?? '未知歌手',
+        album: s.album,
+        durationMs: s.duration ?? 0,
+        resolvedPath: s.data.isEmpty ? null : 'file://${s.data}',
+      );
+
+  PlayerItem _toItem(SongModel s, {bool withUrl = true}) => PlayerItem(
+        title: s.title,
+        artist: s.artist ?? '未知歌手',
+        sourceId: 'local',
+        musicId: '${s.id}',
+        resolvedUrl: withUrl ? 'file://${s.data}' : null,
+        album: s.album,
+        duration: Duration(milliseconds: s.duration ?? 0),
+        artBytes: _artOf(s),
+      );
+
+  void _play(List<SongModel> songs, int index) {
+    final items = [
+      for (final s in songs)
+        if (s.data.isNotEmpty) _toItem(s),
+    ];
+    if (items.isEmpty) return;
     ref.read(playerCoreProvider).setQueue(items, index: index);
-    Navigator.of(context).push(
-        MaterialPageRoute<void>(builder: (_) => const PlayerPage()));
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const PlayerPage()));
+  }
+
+  void _toggleSelect(int id) {
+    setState(() {
+      if (!_selected.remove(id)) _selected.add(id);
+      if (_selected.isEmpty) _batchMode = false;
+    });
+  }
+
+  void _exitBatch() => setState(() {
+        _batchMode = false;
+        _selected.clear();
+      });
+
+  Future<void> _batchAddToPlaylist() async {
+    final songs = [
+      for (final s in _visible)
+        if (_selected.contains(s.id)) s,
+    ];
+    if (songs.isEmpty) return;
+    final playlists = ref.read(playlistsProvider);
+    final target = await showModalBottomSheet<Playlist>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Padding(
+            padding: const EdgeInsets.all(14),
+            child: Text('添加 ${songs.length} 首到歌单',
+                style: Theme.of(context).textTheme.titleMedium),
+          ),
+          for (final p in playlists.sorted)
+            ListTile(
+              leading: Icon(
+                  p.system ? Icons.star_outline : Icons.queue_music,
+                  size: 20),
+              title: Text(p.name),
+              subtitle: Text('${p.entries.length} 首'),
+              onTap: () => Navigator.of(context).pop(p),
+            ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (target == null) return;
+    playlists.addEntries(target.id, [for (final s in songs) _toEntry(s)]);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text('已添加 ${songs.length} 首到「${target.name}」'),
+      duration: const Duration(seconds: 2),
+      behavior: SnackBarBehavior.floating,
+    ));
+    _exitBatch();
   }
 
   @override
   Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Aiwli Music')),
+      appBar: AppBar(
+        title: _searchMode
+            ? TextField(
+                controller: _searchController,
+                focusNode: _searchFocus,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: '搜索歌曲 / 歌手 / 专辑',
+                  border: InputBorder.none,
+                ),
+                onChanged: (v) => setState(() => _query = v),
+              )
+            : const Text('音乐库'),
+        actions: [
+          if (_batchMode) ...[
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Text('已选 ${_selected.length}'),
+              ),
+            ),
+            IconButton(
+              tooltip: '添加到歌单',
+              onPressed: _selected.isEmpty ? null : _batchAddToPlaylist,
+              icon: const Icon(Icons.playlist_add),
+            ),
+            IconButton(
+              tooltip: '取消',
+              onPressed: _exitBatch,
+              icon: const Icon(Icons.close),
+            ),
+          ] else ...[
+            IconButton(
+              tooltip: '搜索',
+              onPressed: () {
+                setState(() => _searchMode = !_searchMode);
+                if (!_searchMode) {
+                  _searchController.clear();
+                  setState(() => _query = '');
+                }
+              },
+              icon: Icon(_searchMode ? Icons.close : Icons.search),
+            ),
+            IconButton(
+              tooltip: '排序',
+              onPressed: _showSortSheet,
+              icon: const Icon(Icons.sort),
+            ),
+          ],
+        ],
+      ),
       body: _buildBody(),
       bottomNavigationBar: ValueListenableBuilder<PlayerUiState>(
         valueListenable: core.state,
@@ -101,22 +321,80 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           return SafeArea(
             child: ListTile(
               tileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              leading: CoverImage(
+                bytes: core.current?.artBytes,
+                url: core.current?.artUri?.toString(),
+                size: 40,
+                radius: 6,
+              ),
               title: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis),
               subtitle: Text(
                   '${s.artist} · ${_fmt(s.position)} / ${_fmt(s.duration ?? Duration.zero)}',
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
-                    onPressed: () =>
-                        s.playing ? core.pause() : core.play(),
+                    onPressed: () => s.playing ? core.pause() : core.play(),
                     icon: Icon(s.playing ? Icons.pause : Icons.play_arrow)),
-                IconButton(
-                    onPressed: core.next,
-                    icon: const Icon(Icons.skip_next)),
+                IconButton(onPressed: core.next, icon: const Icon(Icons.skip_next)),
               ]),
             ),
           );
         },
+      ),
+    );
+  }
+
+  Future<void> _showSortSheet() async {
+    final scheme = Theme.of(context).colorScheme;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) => SafeArea(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: Text('歌曲排序',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            for (final mode in SongSort.values)
+              ListTile(
+                leading: Icon(mode.icon, size: 21),
+                title: Text(mode.label),
+                selected: mode == _sort,
+                selectedTileColor:
+                    scheme.secondaryContainer.withValues(alpha: 0.6),
+                trailing: mode == _sort
+                    ? Icon(Icons.check_rounded, color: scheme.onSecondaryContainer)
+                    : null,
+                onTap: () {
+                  setState(() => _sort = mode);
+                  setSheet(() {});
+                  _persistSort();
+                },
+              ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(children: [
+                Expanded(
+                  child: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(value: true, label: Text('升序')),
+                      ButtonSegment(value: false, label: Text('降序')),
+                    ],
+                    selected: {_ascending},
+                    onSelectionChanged: (v) {
+                      setState(() => _ascending = v.first);
+                      setSheet(() {});
+                      _persistSort();
+                    },
+                  ),
+                ),
+              ]),
+            ),
+            const SizedBox(height: 16),
+          ]),
+        ),
       ),
     );
   }
@@ -134,100 +412,132 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     if (_songs == null) {
       return const Center(child: CircularProgressIndicator());
     }
-    final songs = _songs!;
+
+    final visible = _visible;
+    final core = ref.watch(playerCoreProvider);
+    final current = core.current;
+
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView(
+      child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: PlaylistsStrip(),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-          child: Text('本机歌曲（${songs.length}）',
-              style:
-                  const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-        ),
-        if (songs.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('本机没有扫描到音频文件。把 mp3/flac 放进「音乐」目录后下拉重试。'),
-          ),
-        for (var i = 0; i < songs.length; i++)
-          ListTile(
-            leading: CoverImage(
-              bytes: _artOf(songs[i]),
-              size: 44,
-              radius: 6,
-            ),
-            title: Text(songs[i].title,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(
-                '${songs[i].artist} · ${_fmt(Duration(milliseconds: songs[i].duration ?? 0))}',
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-            onTap: () {
-              final path = songs[i].data;
-              if (path.isEmpty) return;
-              final items = [
-                for (var j = 0; j < songs.length; j++)
-                  PlayerItem(
-                    title: songs[j].title,
-                    artist: songs[j].artist ?? '未知歌手',
-                    sourceId: 'local',
-                    musicId: '${songs[j].id}',
-                    resolvedUrl: 'file://${songs[j].data}',
-                    duration: Duration(milliseconds: songs[j].duration ?? 0),
-                    artBytes: _artOf(songs[j]),
-                  ),
-              ];
-              _play(items, i);
-            },
-            trailing: IconButton(
-              icon: Icon(Icons.play_circle_outline,
-                  size: 22, color: Theme.of(context).colorScheme.primary),
-              tooltip: '播放',
-              onPressed: () {
-                final path = songs[i].data;
-                if (path.isEmpty) return;
-                _play([
-                  PlayerItem(
-                    title: songs[i].title,
-                    artist: songs[i].artist ?? '未知歌手',
-                    sourceId: 'local',
-                    musicId: '${songs[i].id}',
-                    resolvedUrl: 'file://${songs[i].data}',
-                    artBytes: _artOf(songs[i]),
-                    duration:
-                        Duration(milliseconds: songs[i].duration ?? 0),
-                  ),
-                ], 0);
-              },
-            ),
-            onLongPress: () => showAddToPlaylistSheet(
-              context,
-              ref,
-              PlaylistEntry(
-                sourceId: 'local',
-                musicId: '${songs[i].id}',
-                title: songs[i].title,
-                artist: songs[i].artist ?? '未知歌手',
-                durationMs: songs[i].duration,
-                resolvedPath: 'file://${songs[i].data}',
+        // 头部（歌单条 + 标题）+ 歌曲列表
+        itemCount: visible.length + 1,
+        itemBuilder: (context, i) {
+          if (i == 0) {
+            return Column(children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: PlaylistsStrip(),
               ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                child: Row(children: [
+                  Text(
+                    _query.isNotEmpty
+                        ? '搜索结果（${visible.length}）'
+                        : '本机歌曲（${visible.length}）',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${_sort.label}${_ascending ? ' ↑' : ' ↓'}',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                ]),
+              ),
+              if (visible.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    _query.isNotEmpty
+                        ? '没有匹配「$_query」的歌曲'
+                        : (_songs!.isEmpty
+                            ? '本机没有扫描到音频文件。把 mp3/flac 放进「音乐」目录后下拉重试。'
+                            : '没有歌曲'),
+                  ),
+                ),
+            ]);
+          }
+          final s = visible[i - 1];
+          final playing = current?.sourceId == 'local' &&
+              current?.musicId == '${s.id}';
+          final selected = _selected.contains(s.id);
+
+          return ListTile(
+            selected: selected,
+            selectedTileColor: Theme.of(context)
+                .colorScheme
+                .secondaryContainer
+                .withValues(alpha: 0.5),
+            leading: _batchMode
+                ? Checkbox(
+                    value: selected,
+                    onChanged: (_) => _toggleSelect(s.id),
+                  )
+                : CoverImage(bytes: _artOf(s), size: 44, radius: 6),
+            title: Row(children: [
+              if (playing) ...[
+                Icon(Icons.graphic_eq,
+                    size: 14, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 6),
+              ],
+              Expanded(
+                child: Text(
+                  s.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: playing
+                      ? TextStyle(
+                          color: Theme.of(context).colorScheme.primary,
+                          fontWeight: FontWeight.w600)
+                      : null,
+                ),
+              ),
+            ]),
+            subtitle: Text(
+              '${s.artist ?? '未知歌手'} · ${_fmt(Duration(milliseconds: s.duration ?? 0))}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-          ),
-        const SizedBox(height: 8),
-        ],
+            trailing: _batchMode
+                ? null
+                : IconButton(
+                    icon: Icon(Icons.play_circle_outline,
+                        size: 22,
+                        color: Theme.of(context).colorScheme.primary),
+                    tooltip: '播放',
+                    onPressed: () {
+                      if (s.data.isEmpty) return;
+                      _play(visible, i - 1);
+                    },
+                  ),
+            onTap: () {
+              if (_batchMode) {
+                _toggleSelect(s.id);
+              } else if (s.data.isNotEmpty) {
+                _play(visible, i - 1);
+              }
+            },
+            // 长按进入批量选择（参考栖弦 song_row 的 batchMode 手势）
+            onLongPress: () {
+              setState(() {
+                _batchMode = true;
+                _selected.add(s.id);
+              });
+            },
+          );
+        },
       ),
     );
   }
 
   static String _fmt(Duration d) {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return '${d.inHours > 0 ? '${d.inHours}:' : ''}$m:$s';
+    final sec = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$m:$sec';
   }
 }
-

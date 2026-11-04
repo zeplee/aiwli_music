@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import '../core/services/playlists.dart';
 import 'audio_engine.dart';
 import 'audio_focus_policy.dart';
 import 'media_session_cast.dart';
@@ -38,6 +39,19 @@ class PlayerItem {
   /// 本地封面字节（on_audio_query 的 queryArtwork 返回内存图，非 URL）。
   /// 优先级高于 [artUri]：本地歌曲没有网络封面。
   final Uint8List? artBytes;
+
+  /// 转成歌单条目（加入歌单用；歌单按 sourceId+musicId 走取链，
+  /// 本地曲目带 resolvedPath 直接播）。
+  PlaylistEntry toEntry() => PlaylistEntry(
+        sourceId: sourceId,
+        musicId: musicId,
+        title: title,
+        artist: artist,
+        album: album,
+        durationMs: duration?.inMilliseconds,
+        picUrl: artUri?.toString(),
+        resolvedPath: sourceId == 'local' ? resolvedUrl : null,
+      );
 
   TrackMetadata get metadata => TrackMetadata(
         title: title,
