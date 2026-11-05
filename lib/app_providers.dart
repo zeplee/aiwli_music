@@ -11,6 +11,7 @@ import 'core/services/app_settings.dart';
 import 'core/services/backup_service.dart';
 import 'core/services/logger.dart';
 import 'core/services/play_history_service.dart';
+import 'core/services/source_health_service.dart';
 import 'core/services/playlists.dart';
 import 'core/services/search_history_service.dart';
 import 'core/services/safe_notifier.dart';
@@ -63,7 +64,7 @@ Future<ResolvedPlayback> resolveUrl(
       artist: item.artist,
     );
   }
-  return ref.read(playbackResolverProvider).resolve(
+  final resolved = await ref.read(playbackResolverProvider).resolve(
     title: item.title,
     artist: item.artist,
     sourceId: item.sourceId,
@@ -72,6 +73,9 @@ Future<ResolvedPlayback> resolveUrl(
     raw: item.raw,
     excludeIds: excludeSources,
   );
+  // 取链成功 → 记录健康（连续失败清零）
+  ref.read(sourceHealthProvider).reportSuccess(resolved.winnerId);
+  return resolved;
 }
 
 /// 全局唯一的取链器：URL 缓存 + 「平台→成功源」记忆都在它身上，
@@ -110,6 +114,8 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
       resolver.reportUnplayable(resolved.winnerId, error: error);
       // 该源名下缓存可能都是死链，一并作废
       resolver.invalidateCacheAll(resolved.winnerId);
+      // 记录失败（被动学习，供源管理页展示健康度）
+      ref.read(sourceHealthProvider).reportFailure(resolved.winnerId, error);
     },
     // 真正开始播放时写一条播放历史（解析失败/死链不会进历史）
     onTrackStarted: (item) {
@@ -171,7 +177,11 @@ final playlistsProvider = ChangeNotifierProvider<PlaylistService>((ref) {
   final store = ref.watch(settingsStoreProvider);
   final s = PlaylistService(store);
   // load 完成后再迁移旧 favorites.json（幂等：已迁移则无条目可并）
-  s.load().then((_) => migrateLegacyFavorites(s, store));
+  s.load().then((_) async {
+    await migrateLegacyFavorites(s, store);
+    // 每次启动收尾：已有文件夹收藏时清掉顶层那份（幂等，防止复活）
+    s.dropTopLevelFavoritesIfFoldered();
+  });
   ref.onDispose(s.dispose);
   return s;
 });
@@ -421,6 +431,14 @@ final downloadManagerProvider =
 
 // ============ 收藏 / WebDAV ============
 
+final sourceHealthProvider =
+    ChangeNotifierProvider<SourceHealthService>((ref) {
+  final svc = SourceHealthService(ref.watch(settingsStoreProvider));
+  svc.load();
+  ref.onDispose(svc.dispose);
+  return svc;
+});
+
 final playHistoryProvider = ChangeNotifierProvider<PlayHistoryService>((ref) {
   final svc = PlayHistoryService(ref.watch(settingsStoreProvider));
   svc.ensureLoaded().then((_) => svc.backfillCovers());
@@ -445,6 +463,11 @@ final searchHistoryProvider =
 /// 迁移完把 favorites.json 改名备份，避免重复迁移。
 Future<void> migrateLegacyFavorites(PlaylistService playlists,
     SettingsStore store) async {
+  // 全新用户（没有任何歌单）→ 建一份顶层收藏，保证有收藏入口
+  if (playlists.playlists.isEmpty) {
+    playlists.ensureFavoritesIn(null);
+  }
+
   final data = await store.load('favorites.json');
   final list = (data['items'] as List?) ?? const [];
   if (list.isEmpty) return;
@@ -498,14 +521,31 @@ Future<void> migrateLegacyFavorites(PlaylistService playlists,
     AppLog.i('Migrate', '已删除陈旧歌单「我的收藏（旧）」(${stale.entries.length} 首，内容与系统收藏重复)');
   }
 
-  // 3) 「试听列表」保持顶层，不建额外文件夹（用户明确不要「lx 导入」分组）。
-  //    只把它从任何已有文件夹里移出来，恢复成普通歌单。
+  // 3) 「试听列表」保持顶层（不要额外的导入文件夹）
   for (final t in playlists.playlists
       .where((p) => p.name == '试听列表' && p.folder != null)
       .toList()) {
     playlists.setFolder(t.id, null);
     AppLog.i('Migrate', '「试听列表」已移回顶层歌单');
   }
+
+  // 4) 多用户共用：把人名歌单升级为「文件夹」，并按用户意图整理收藏。
+  //
+  //    用户要求：
+  //      - 李泽鹏 → 文件夹，原「李泽鹏」播放列表改名为「我的收藏」放进去
+  //      - 梁登宵 → 文件夹，原「梁登宵」播放列表改名为「我的收藏」放进去
+  //      - 其余歌单也收进梁登宵文件夹
+  //    刻意放在第 3 步之后、且仅执行一次（用标记文件避免重复搬运）。
+  await _splitUsersIntoFolders(playlists, store);
+
+  // 5) 全局「我的收藏」（sys_favorites，无文件夹归属）并入「李泽鹏」文件夹的收藏
+  //    然后删除全局那份——用户要求不要让全局收藏占第一位。
+  //    安全前提：先把 27 首全部加进李泽鹏的收藏（含不在其歌单里的 24 首），
+  //    确认无遗漏后才删除。
+  await _mergeGlobalFavoritesInto(playlists, store);
+
+  // 6) 收尾：清掉 load 时自动补建的空全局收藏
+  await _dropGlobalFavoritesIfRedundant(playlists);
   // 标记已迁移（保留原文件内容便于回滚，但不再读取）
   await store.flush('favorites.json.migrated', {'at': DateTime.now().toIso8601String()});
 }
@@ -516,3 +556,127 @@ final webDavServiceProvider = ChangeNotifierProvider<WebDavService>((ref) {
   ref.onDispose(svc.dispose);
   return svc;
 });
+
+/// 把「人名歌单」升级为文件夹，并按用户要求整理成多用户共用结构。
+///
+/// 幂等：用 playlists.folders_v1 标记，只跑一次。
+/// 安全：任何曲目都不会丢失——改名/移动是改字段，不删条目。
+Future<void> _splitUsersIntoFolders(
+    PlaylistService playlists, SettingsStore store) async {
+  final done = await store.load('folders_v1.json');
+  if (done['applied'] == true) return;
+
+  const users = ['李泽鹏', '梁登宵'];
+
+  for (final name in users) {
+    final src = playlists.playlists
+        .where((p) => !p.system && p.name == name && p.folder == null)
+        .firstOrNull;
+    if (src == null) {
+      // 已经是文件夹了（或用户改过名），跳过
+      continue;
+    }
+    // ① 该歌单改名为「我的收藏」，并归入同名文件夹
+    playlists.rename(src.id, '我的收藏');
+    playlists.setFolder(src.id, name);
+    // ② 标记为系统收藏（不可删/改名），并置顶
+    playlists.markAsSystem(src.id);
+    AppLog.i('Migrate', '「$name」已升级为文件夹，原播放列表成为该文件夹的「我的收藏」(${src.entries.length} 首)');
+  }
+
+  // ③ 其余歌单收进「梁登宵」文件夹（用户要求：其他列表也收到梁登宵）
+  //    例外：试听列表留在顶层（用户明确要求放第一位），以及已归属文件夹的不动。
+  final ldx = playlists.playlists
+      .where((p) => p.name == '我的收藏' && p.folder == '梁登宵')
+      .firstOrNull;
+  if (ldx != null) {
+    final moved = <String>[];
+    for (final p in playlists.playlists.toList()) {
+      if (p.folder != null) continue; // 已在某文件夹
+      if (p.name == '试听列表') continue; // 保持顶层第一位
+      if (p.name == '我的收藏') continue; // 各用户的收藏各自归位
+      playlists.setFolder(p.id, '梁登宵');
+      moved.add(p.name);
+    }
+    if (moved.isNotEmpty) {
+      AppLog.i('Migrate', '已收进「梁登宵」文件夹: ${moved.join('、')}');
+    }
+  }
+
+  await store.flush('folders_v1.json',
+      {'applied': true, 'at': DateTime.now().toIso8601String()});
+}
+
+/// 把全局「我的收藏」并入「李泽鹏 / 我的收藏」，然后删除全局那份。
+///
+/// 用户场景：多用户共用一个 App，每人一个文件夹各自收藏。
+/// 全局收藏（无文件夹归属）会一直占据列表第一位，所以移除；
+/// 但其中 24 首并不在任何人的歌单里，删除前必须全部转移，否则丢数据。
+Future<void> _mergeGlobalFavoritesInto(
+    PlaylistService playlists, SettingsStore store) async {
+  final done = await store.load('global_fav_merged_v1.json');
+  if (done['applied'] == true) return;
+
+  final global = playlists.playlists
+      .where((p) => p.id == PlaylistService.favoritesId)
+      .firstOrNull;
+  final target = playlists.favoritesIn('李泽鹏');
+  if (global == null || target == null) return;
+
+  final before = target.entries.length;
+  playlists.addEntries(target.id, global.entries);
+  final merged = playlists.byId(target.id);
+  if (merged == null) return;
+  final after = merged.entries.length;
+
+  // 逐条校验，确认 27 首全部到位才删全局那份
+  final allIn = global.entries.every((e) => merged.entries
+      .any((x) => x.sourceId == e.sourceId && x.musicId == e.musicId));
+  if (!allIn) {
+    AppLog.w('Migrate', '全局收藏合并校验失败，保留全局歌单不删除');
+    return;
+  }
+
+  playlists.delete(PlaylistService.favoritesId);
+  AppLog.i('Migrate',
+      '全局「我的收藏」${global.entries.length} 首已并入「李泽鹏」的收藏（$before → $after），已删除全局那份');
+  await store.flush('global_fav_merged_v1.json',
+      {'applied': true, 'at': DateTime.now().toIso8601String()});
+}
+
+/// 迁移收尾：如果已存在各文件夹的「我的收藏」，就清掉顶层的全局收藏。
+///
+/// 为什么需要：PlaylistService.load() 会自动补建全局收藏（老用户升级兼容），
+/// 而补建发生在迁移之前，于是每次启动都先造出一个空的顶层收藏。
+/// 这里在迁移完成后统一清掉，保证列表第一位是「试听列表」而不是空收藏。
+Future<void> _dropGlobalFavoritesIfRedundant(
+    PlaylistService playlists) async {
+  final hasFolderFav = playlists.playlists
+      .any((p) => p.name == '我的收藏' && p.folder != null);
+  if (!hasFolderFav) return;
+
+  final global = playlists.playlists
+      .where((p) => p.id == PlaylistService.favoritesId)
+      .firstOrNull;
+  if (global == null) return;
+
+  // 全局收藏若还有内容，先并入李泽鹏（或任一文件夹的收藏）再删，避免丢数据
+  if (global.entries.isNotEmpty) {
+    final target = playlists.favoritesIn('李泽鹏') ??
+        playlists.playlists
+            .where((p) => p.name == '我的收藏' && p.folder != null)
+            .firstOrNull;
+    if (target == null) return;
+    playlists.addEntries(target.id, global.entries);
+    final t = playlists.byId(target.id);
+    final allIn = t != null &&
+        global.entries.every((e) => t.entries.any(
+            (x) => x.sourceId == e.sourceId && x.musicId == e.musicId));
+    if (!allIn) {
+      AppLog.w('Migrate', '全局收藏仍有条目未转移，保留不删');
+      return;
+    }
+  }
+  playlists.delete(PlaylistService.favoritesId);
+  AppLog.i('Migrate', '已清掉顶层全局收藏（各文件夹已有自己的收藏）');
+}

@@ -7,6 +7,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app_providers.dart';
+import '../../../core/services/source_health_service.dart';
 
 /// 音源管理（二级页）：导入 / 启停 / 删除 / 设活跃。
 class SourceManagePage extends ConsumerWidget {
@@ -15,7 +16,14 @@ class SourceManagePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final registry = ref.watch(sourceRegistryProvider);
+    final health = ref.watch(sourceHealthProvider);
     final scheme = Theme.of(context).colorScheme;
+    // 已失效（连续失败 ≥5）的源，用于顶部汇总提示
+    final deadSources = <(String, String)>[
+      for (final s in registry.installed)
+        if (s.enabled && health.recordFor(s.id).health == SourceHealth.dead)
+          (s.name, s.id),
+    ];
     return Scaffold(
       appBar: AppBar(title: const Text('音源管理')),
       body: ListView(children: [
@@ -28,28 +36,49 @@ class SourceManagePage extends ConsumerWidget {
             style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
           ),
         ),
-        for (final s in registry.installed)
-          ListTile(
-            onTap: () => ref.read(sourceRegistryProvider).setActive(s.id),
-            leading: Icon(Icons.extension,
-                color:
-                    s.enabled ? scheme.primary : scheme.onSurfaceVariant),
-            title: Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: Text(s.enabled && s.id == registry.activeId
-                ? '活跃中'
-                : (s.enabled ? '已启用' : '已停用')),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-              Switch(
-                value: s.enabled,
-                onChanged: (v) =>
-                    ref.read(sourceRegistryProvider).setEnabled(s.id, v),
+        // 失效源汇总提示（被动统计，不从网络探测）
+        if (deadSources.isNotEmpty)
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: scheme.errorContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(children: [
+              Icon(Icons.warning_amber_rounded,
+                  size: 18, color: scheme.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${deadSources.length} 个源近期连续取链失败：${deadSources.map((e) => e.$1).join('、')}',
+                  style: TextStyle(
+                      fontSize: 12, color: scheme.onErrorContainer),
+                ),
               ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline),
-                onPressed: () =>
-                    ref.read(sourceRegistryProvider).remove(s.id),
+              TextButton(
+                onPressed: () {
+                  for (final e in deadSources) {
+                    ref.read(sourceRegistryProvider).setEnabled(e.$2, false);
+                  }
+                },
+                child: Text('全部禁用',
+                    style: TextStyle(
+                        fontSize: 12, color: scheme.onErrorContainer)),
               ),
             ]),
+          ),
+        for (final s in registry.installed)
+          _SourceTile(
+            source: s,
+            isActive: s.id == registry.activeId,
+            health: health.recordFor(s.id),
+            onSetActive: () => ref.read(sourceRegistryProvider).setActive(s.id),
+            onToggle: (v) =>
+                ref.read(sourceRegistryProvider).setEnabled(s.id, v),
+            onDelete: () => ref.read(sourceRegistryProvider).remove(s.id),
+            onDisable: () =>
+                ref.read(sourceRegistryProvider).setEnabled(s.id, false),
           ),
         if (registry.installed.isEmpty)
           const Padding(
@@ -164,5 +193,105 @@ class SourceManagePage extends ConsumerWidget {
   void _toast(ScaffoldMessengerState messenger, String msg) {
     messenger.showSnackBar(
         SnackBar(content: Text(msg), duration: const Duration(seconds: 2)));
+  }
+}
+
+
+/// 单个源卡片：名称 + 健康状态 + 最近失败原因 + 操作。
+class _SourceTile extends StatelessWidget {
+  const _SourceTile({
+    required this.source,
+    required this.isActive,
+    required this.health,
+    required this.onSetActive,
+    required this.onToggle,
+    required this.onDelete,
+    required this.onDisable,
+  });
+  final dynamic source;
+  final bool isActive;
+  final SourceHealthRecord health;
+  final VoidCallback onSetActive;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback onDelete;
+  final VoidCallback onDisable;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final enabled = source.enabled as bool;
+    final dead = health.health == SourceHealth.dead;
+    final degraded = health.health == SourceHealth.degraded;
+
+    final dotColor = !enabled
+        ? scheme.onSurfaceVariant
+        : dead
+            ? scheme.error
+            : degraded
+                ? scheme.tertiary
+                : scheme.primary;
+
+    return ListTile(
+      onTap: onSetActive,
+      leading: Icon(Icons.extension,
+          color: enabled ? scheme.primary : scheme.onSurfaceVariant),
+      title: Row(children: [
+        // 健康状态圆点
+        Container(
+          width: 8,
+          height: 8,
+          margin: const EdgeInsets.only(right: 6),
+          decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+        ),
+        Expanded(
+          child: Text(source.name as String,
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
+        if (enabled)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: dotColor.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(health.healthLabel,
+                style: TextStyle(fontSize: 10, color: dotColor)),
+          ),
+      ]),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            enabled && isActive
+                ? '活跃中'
+                : (enabled ? '已启用' : '已停用'),
+            style: const TextStyle(fontSize: 12),
+          ),
+          // 失败原因（只在有失败时显示，翻译成人类语言）
+          if (enabled && health.consecutiveFailures > 0)
+            Text(
+              '连续失败 ${health.consecutiveFailures} 次 · ${health.friendlyError}',
+              style: TextStyle(
+                  fontSize: 11,
+                  color: dead ? scheme.error : scheme.onSurfaceVariant),
+            ),
+        ],
+      ),
+      isThreeLine: enabled && health.consecutiveFailures > 0,
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        // 失效源给一键禁用
+        if (dead)
+          TextButton(
+            onPressed: onDisable,
+            child: Text('禁用',
+                style: TextStyle(fontSize: 12, color: scheme.error)),
+          ),
+        Switch(value: enabled, onChanged: onToggle),
+        IconButton(
+          icon: const Icon(Icons.delete_outline),
+          onPressed: onDelete,
+        ),
+      ]),
+    );
   }
 }
