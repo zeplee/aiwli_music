@@ -6,6 +6,10 @@ class AppPaths {
 
   static String? _support;
 
+  /// 测试用：预置目录，避免依赖 path_provider 的平台通道。
+  /// 也可用于"用户自定义数据目录"等场景。
+  static void overrideSupportDirForTesting(String? path) => _support = path;
+
   static Future<String> supportDir() async {
     final cached = _support;
     if (cached != null) return cached;

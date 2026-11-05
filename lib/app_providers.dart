@@ -473,8 +473,10 @@ Future<void> migrateLegacyFavorites(PlaylistService playlists,
 
   final data = await store.load('favorites.json');
   final list = (data['items'] as List?) ?? const [];
-  if (list.isEmpty) return;
 
+  // 注意：不能因为 favorites.json 为空就 `return`。
+  // 它可能早已迁移过（内容搬进歌单后清空），而下面的
+  // 「重名收藏清理 / 试听列表归位 / 文件夹整理」仍需执行。
   final entries = <PlaylistEntry>[];
   for (final m in list) {
     if (m is! Map) continue;

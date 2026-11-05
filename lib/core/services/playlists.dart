@@ -189,6 +189,11 @@ class PlaylistService extends SafeNotifier {
   Playlist ensureFavoritesIn(String? folder) {
     final existing = favoritesIn(folder);
     if (existing != null) return existing;
+    // 重新创建收藏 = 用户又要收藏了，清掉"删过"标记
+    if (_favoritesDeleted) {
+      _favoritesDeleted = false;
+      _persistFavoritesFlag();
+    }
     final p = Playlist(
       id: folder == null
           ? favoritesId
@@ -204,7 +209,22 @@ class PlaylistService extends SafeNotifier {
   }
 
   Future<void> load() async {
-    final m = await _store.load(_file);
+    // 先读"用户删过收藏"标记，再决定是否补建
+    final flags = await _store.load('playlists_flags.json');
+    _favoritesDeleted = flags['favoritesDeleted'] == true;
+
+    final m = await _store.loadOrNull(_file);
+    if (m == null) {
+      // 文件存在但**损坏且无法抢救**：绝不把它当空列表，
+      // 更不能让后续 _persist 把空数据写回去（会永久丢失歌单）。
+      // 真机事故：并发写导致两个 JSON 拼接 → 解析失败 → 歌单全清。
+      _loadCorrupted = true;
+      AppLog.e('Playlists',
+          'playlists.json 损坏无法解析，已停止加载并禁止覆盖写盘（原文件保留）');
+      notifyListeners();
+      return;
+    }
+    _loadCorrupted = false;
     playlists = ((m['playlists'] as List?) ?? const [])
         .map((e) => Playlist.fromJson(e as Map))
         .toList();
@@ -212,12 +232,20 @@ class PlaylistService extends SafeNotifier {
     notifyListeners();
   }
 
+  /// 上次 load 是否因文件损坏而放弃读取。为 true 时禁止任何持久化，
+  /// 避免用内存里的空/残缺数据覆盖用户原文件。
+  bool _loadCorrupted = false;
+  bool get loadCorrupted => _loadCorrupted;
+
   /// 保证顶层「我的收藏」存在（老用户升级后自动补建）。
   ///
   /// 多用户共用场景：收藏可以分散在各文件夹里（每人一份）。
   /// 只要**任何地方**已存在「我的收藏」，就不再补建全局那份，
   /// 否则删掉的全局收藏会在下次启动时又冒出来占第一位。
   void _ensureSystemPlaylists() {
+    // 用户主动删过收藏 → 不再自动补建（否则"删了又冒出来"）
+    if (_favoritesDeleted) return;
+
     // 任何位置（顶层或某文件夹）已有「我的收藏」→ 不再补建顶层那份。
     // 多用户场景的关键：删掉的顶层收藏不能在下次启动复活。
     if (playlists.any((p) => p.name == '我的收藏')) return;
@@ -270,6 +298,10 @@ class PlaylistService extends SafeNotifier {
   }
 
   Future<void> _persist() async {
+    if (_loadCorrupted) {
+      AppLog.w('Playlists', '文件损坏状态下跳过写盘（保护原数据）');
+      return;
+    }
     await _store.flush(_file, {
       'playlists': playlists.map((p) => p.toJson()).toList(),
     });
@@ -286,11 +318,39 @@ class PlaylistService extends SafeNotifier {
     return p;
   }
 
+  /// 删除歌单。
+  ///
+  /// 「我的收藏」也可以删（用户明确要求"外层我的收藏歌单没法删除"）。
+  /// 删掉后设置 [_favoritesDeleted] 标记，避免下次启动被
+  /// _ensureSystemPlaylists 自动重建——否则会出现"删了又冒出来"。
   void delete(String id) {
-    // 系统歌单不可删除（收藏入口常驻）
-    if (playlists.any((p) => p.id == id && p.system)) return;
+    final wasFavorites = playlists.any(
+        (p) => p.id == id && p.name == '我的收藏');
     playlists = playlists.where((p) => p.id != id).toList();
+    if (wasFavorites &&
+        !playlists.any((p) => p.name == '我的收藏')) {
+      // 已经没有任何收藏歌单了 → 记住用户的选择，不再自动补建
+      _favoritesDeleted = true;
+      _persistFavoritesFlag();
+    }
     unawaitedPersist();
+  }
+
+  /// 用户是否主动删除过收藏歌单（true = 不再自动重建）。
+  bool _favoritesDeleted = false;
+  bool get favoritesDeleted => _favoritesDeleted;
+
+  /// 恢复收藏歌单（用户从"更多"里重新加回来）。
+  Playlist restoreFavorites({String? folder}) {
+    _favoritesDeleted = false;
+    _persistFavoritesFlag();
+    return ensureFavoritesIn(folder);
+  }
+
+  Future<void> _persistFavoritesFlag() async {
+    await _store.flush('playlists_flags.json', {
+      'favoritesDeleted': _favoritesDeleted,
+    });
   }
 
   void rename(String id, String name) {

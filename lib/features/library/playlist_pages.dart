@@ -416,8 +416,8 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
     Widget tileFor(Playlist p) => Dismissible(
           key: ValueKey('pl_${p.id}'),
           // 系统歌单（各人的「我的收藏」）禁止左滑，避免误删收藏
-          direction:
-              p.system ? DismissDirection.none : DismissDirection.endToStart,
+          // 所有歌单都可左滑删除（含「我的收藏」，用户明确要求）
+          direction: DismissDirection.endToStart,
           background: Container(
             color: scheme.errorContainer,
             alignment: Alignment.centerRight,
@@ -466,13 +466,21 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
                   ),
                   onPressed: () => _moveToFolder(p),
                 ),
+                // 可见的删除入口：左滑/长按不易被发现（用户反馈"没法删除"）
+                IconButton(
+                  tooltip: '删除歌单',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(Icons.delete_outline,
+                      size: 18, color: scheme.error),
+                  onPressed: () => _confirmDeletePlaylist(p),
+                ),
                 Icon(Icons.chevron_right,
                     size: 18, color: scheme.onSurfaceVariant),
               ]),
               onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
                   builder: (_) => PlaylistDetailPage(playlistId: p.id))),
               // 长按：删除歌单（系统收藏不提供）
-              onLongPress: p.system ? null : () => _confirmDeletePlaylist(p),
+              onLongPress: () => _confirmDeletePlaylist(p),
             ),
           ),
         );
@@ -578,23 +586,19 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
 
   /// 删除歌单（二次确认）。系统歌单不可删，直接给提示。
   Future<bool> _confirmDeletePlaylist(Playlist p) async {
-    if (p.system) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('「我的收藏」是系统歌单，不能删除'),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 2),
-        ));
-      }
-      return false;
-    }
+    final isFavorite = p.name == '我的收藏';
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('删除歌单「${p.name}」？'),
-        content: Text(p.entries.isEmpty
-            ? '该歌单为空。'
-            : '歌单内 ${p.entries.length} 首会一并移除（不会删除本地文件）。'),
+        content: Text(isFavorite
+            ? '这是收藏歌单。删除后收藏列表消失，'
+                '${p.entries.length} 首歌的收藏关系一并移除'
+                '（歌曲本身不受影响，也不会删本地文件）。\n\n'
+                '删除后不会自动重建——下次点「收藏」时会新建一份空收藏。'
+            : (p.entries.isEmpty
+                ? '该歌单为空。'
+                : '歌单内 ${p.entries.length} 首会一并移除（不会删除本地文件）。')),
         actions: [
           TextButton(
               onPressed: () => Navigator.of(context).pop(false),

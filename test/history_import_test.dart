@@ -13,6 +13,12 @@ class _MemStore extends SettingsStore {
   Future<Map<String, Object?>> load(String fileName) async =>
       Map.of(data[fileName] ?? const {});
 
+  // 生产代码改用 loadOrNull 区分「不存在」与「损坏」，
+  // 测试替身必须一并覆盖，否则会走真实文件系统（需要 Flutter binding）。
+  @override
+  Future<Map<String, Object?>?> loadOrNull(String fileName) async =>
+      Map.of(data[fileName] ?? const {});
+
   @override
   Future<void> flush(String fileName, Map<String, Object?> payload) async {
     data[fileName] = Map.of(payload);
