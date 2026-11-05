@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import '../core/services/logger.dart';
 import '../core/services/playlists.dart';
 import 'audio_engine.dart';
 import 'audio_focus_policy.dart';
@@ -229,6 +230,8 @@ class PlayerCore {
     final key = '${item?.sourceId}/${item?.musicId}|${s.playing}|${s.title}|${s.duration}';
     if (key == _lastCastKey) return;
     _lastCastKey = key;
+    // 诊断：确认状态推送真的发生（真机排查"点了播放媒体会话不动"）
+    AppLog.d('Cast', 'push playing=${s.playing} title=${s.title}');
     if (item != null) cast.updateNowPlaying(item.metadata);
     cast.updatePlayback(
       playing: s.playing,

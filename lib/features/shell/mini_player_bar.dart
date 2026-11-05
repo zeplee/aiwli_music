@@ -46,9 +46,12 @@ class MiniPlayerBar extends ConsumerWidget {
                 backgroundColor: Colors.transparent,
                 valueColor: AlwaysStoppedAnimation(scheme.primary),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+              // 高度固定为 56：IconButton 默认 48 + 上下 padding 会溢出 4px
+              // （真机日志确认 "RenderFlex overflowed by 4.0 pixels"）。
+              SizedBox(
+                height: 56,
                 child: Row(children: [
+                  const SizedBox(width: 12),
                   CoverImage(
                     bytes: core.current?.artBytes,
                     url: core.current?.artUri?.toString(),
@@ -78,16 +81,27 @@ class MiniPlayerBar extends ConsumerWidget {
                       ],
                     ),
                   ),
+                  // 紧凑按钮：默认 IconButton 是 48x48，会在 56 高的行里
+                  // 加上 Material 内边距导致底部溢出。
                   IconButton(
                     tooltip: s.playing ? '暂停' : '播放',
                     onPressed: () => s.playing ? core.pause() : core.play(),
                     icon: Icon(s.playing ? Icons.pause : Icons.play_arrow),
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints(minWidth: 40, minHeight: 40),
+                    padding: EdgeInsets.zero,
                   ),
                   IconButton(
                     tooltip: '下一首',
                     onPressed: core.next,
                     icon: const Icon(Icons.skip_next),
+                    visualDensity: VisualDensity.compact,
+                    constraints:
+                        const BoxConstraints(minWidth: 40, minHeight: 40),
+                    padding: EdgeInsets.zero,
                   ),
+                  const SizedBox(width: 4),
                 ]),
               ),
             ]),
