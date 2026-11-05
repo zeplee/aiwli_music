@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app_providers.dart';
 import '../downloads/downloads_page.dart';
 import '../library/library_page.dart';
-import '../library/recent_page.dart';
 import 'webdav_page.dart';
 import 'source_manage_page.dart';
 
@@ -66,15 +65,6 @@ class MinePage extends ConsumerWidget {
           subtitle: Text(tasksSubtitle(ref)),
           onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
               builder: (_) => const DownloadsPage())),
-        ),
-        ListTile(
-          leading: const Icon(Icons.history),
-          title: const Text('最近播放'),
-          subtitle: Text(ref.watch(playHistoryProvider).isEmpty
-              ? '暂无记录'
-              : '${ref.watch(playHistoryProvider).items.length} 首'),
-          onTap: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const RecentPlayedPage())),
         ),
         ListTile(
           leading: const Icon(Icons.extension),

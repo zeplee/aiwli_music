@@ -33,7 +33,12 @@ extension on SongSort {
       };
 }
 
-/// 音乐库：歌单条 + 本机歌曲（页内搜索 / 排序 / 批量选择 / 当前曲高亮）。
+/// 曲库：我收藏的东西。三个 Tab 分层展示，避免三个列表堆在一屏里。
+///
+///   · 歌单 —— 我的歌单（可删除/移动/文件夹分组）
+///   · 最近 —— 最近播放（横向卡片改为纵向列表，更好点）
+///   · 本机 —— 本机歌曲（搜索/排序/批量/删除）
+
 class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
 
@@ -41,8 +46,12 @@ class LibraryPage extends ConsumerStatefulWidget {
   ConsumerState<LibraryPage> createState() => _LibraryPageState();
 }
 
-class _LibraryPageState extends ConsumerState<LibraryPage> {
+class _LibraryPageState extends ConsumerState<LibraryPage>
+    with SingleTickerProviderStateMixin {
   final _audioQuery = OnAudioQuery();
+
+  late final TabController _tabs =
+      TabController(length: 3, vsync: this);
   List<SongModel>? _songs;
   String? _error;
 
@@ -63,6 +72,9 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   bool _batchMode = false;
   final Set<int> _selected = {};
 
+  /// 用户从曲库移除的本机歌曲 id（只影响展示，不删文件）。
+  final Set<int> _hiddenSongs = {};
+
   @override
   void initState() {
     super.initState();
@@ -72,6 +84,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
 
   @override
   void dispose() {
+    _tabs.dispose();
     _searchController.dispose();
     _searchFocus.dispose();
     super.dispose();
@@ -147,12 +160,15 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   List<SongModel> get _visible {
     final all = _songs ?? const <SongModel>[];
     final dirs = ref.read(appSettingsProvider).localMusicDirs;
-    var list = dirs.isEmpty
+    var list = (_hiddenSongs.isEmpty
         ? all
         : [
             for (final s in all)
-              if (dirs.any((d) => s.data.startsWith(d))) s,
-          ];
+              if (!_hiddenSongs.contains(s.id)) s,
+          ])
+        .where((s) =>
+            dirs.isEmpty || dirs.any((d) => s.data.startsWith(d)))
+        .toList();
     final q = _query.trim().toLowerCase();
     if (q.isNotEmpty) {
       list = [
@@ -279,7 +295,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                 ),
                 onChanged: (v) => setState(() => _query = v),
               )
-            : const Text('音乐库'),
+            : const Text('曲库'),
         actions: [
           if (_batchMode) ...[
             Center(
@@ -470,190 +486,296 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   }
 
   Widget _buildBody() {
-    if (_error != null) {
+    // 注意：不能在本机歌曲未就绪时**整页**转圈——
+    // 那样歌单和最近播放也看不到（真机确认过：_songs==null 时
+    // 连 Tab 都不渲染）。加载/错误状态只落在「本机」Tab 内部。
+    final scheme = Theme.of(context).colorScheme;
+    final visible = _visible;
+    final core = ref.watch(playerCoreProvider);
+    final current = core.current;
+
+    return Column(children: [
+      // 三个 Tab 分层：歌单 / 最近 / 本机
+      // 之前把「歌单纵向列表 + 继续聆听横向卡片 + 本机歌曲纵向列表」
+      // 全堆在一个滚动视图里，层级混乱且不好定位。
+      TabBar(
+        controller: _tabs,
+        tabs: const [
+          Tab(text: '歌单'),
+          Tab(text: '最近'),
+          Tab(text: '本机'),
+        ],
+        labelColor: Theme.of(context).colorScheme.primary,
+        unselectedLabelColor: Theme.of(context).colorScheme.onSurfaceVariant,
+        indicatorSize: TabBarIndicatorSize.label,
+      ),
+      Expanded(
+        child: TabBarView(
+          controller: _tabs,
+          children: [
+            _buildPlaylistsTab(scheme),
+            _buildRecentTab(scheme),
+            _buildLocalTab(scheme, visible, current),
+          ],
+        ),
+      ),
+    ]);
+  }
+
+  /// 歌单 Tab：纵向列表（可删除 / 移动 / 文件夹分组）
+  Widget _buildPlaylistsTab(ColorScheme scheme) {
+    final playlists = ref.watch(playlistsProvider);
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        children: [
+          PlaylistsStrip(),
+          if (playlists.playlists.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Text('还没有歌单。新建一个，或从 lx/M3U 导入。',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 12, color: scheme.onSurfaceVariant)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 最近 Tab：纵向列表（比原来的横向卡片好点、信息更全）
+  Widget _buildRecentTab(ColorScheme scheme) {
+    final recent = ref.watch(playHistoryProvider).items;
+    if (recent.isEmpty) {
       return Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(_error!, textAlign: TextAlign.center),
-          const SizedBox(height: 12),
-          FilledButton(onPressed: _load, child: const Text('重试')),
+          Icon(Icons.history, size: 36, color: scheme.onSurfaceVariant),
+          const SizedBox(height: 8),
+          Text('还没有播放记录',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
         ]),
       );
     }
-    if (_songs == null) {
-      return const Center(child: CircularProgressIndicator());
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: recent.length,
+      itemBuilder: (context, i) {
+        final h = recent[i];
+        return ListTile(
+          leading: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              color: scheme.surfaceContainerHighest,
+            ),
+            child: Icon(Icons.music_note,
+                size: 20, color: scheme.onSurfaceVariant),
+          ),
+          title: Text(h.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(h.artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11)),
+          trailing: IconButton(
+            tooltip: '从记录中移除',
+            icon: Icon(Icons.close, size: 16, color: scheme.outline),
+            onPressed: () =>
+                ref.read(playHistoryProvider).remove(h.sourceId, h.musicId),
+          ),
+          onTap: () {
+            final items = [
+              for (final x in recent)
+                PlayerItem(
+                  title: x.title,
+                  artist: x.artist,
+                  sourceId: x.sourceId,
+                  musicId: x.musicId,
+                  album: x.album,
+                  artUri: (x.picUrl == null || x.picUrl!.isEmpty)
+                      ? null
+                      : Uri.tryParse(x.picUrl!),
+                  duration: x.durationMs == null
+                      ? null
+                      : Duration(milliseconds: x.durationMs!),
+                ),
+            ];
+            ref.read(playerCoreProvider).setQueue(items, index: i);
+            Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const PlayerPage()));
+          },
+        );
+      },
+    );
+  }
+
+  /// 本机 Tab：本机歌曲（搜索 / 排序 / 批量 / 删除）
+  Widget _buildLocalTab(
+      ColorScheme scheme, List<SongModel> visible, PlayerItem? current) {
+    // 本机专属状态：扫描中 / 权限或扫描失败 / 空列表
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.folder_off_outlined,
+                size: 36, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 10),
+            Text(_error!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13)),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('重试扫描'),
+            ),
+          ]),
+        ),
+      );
     }
-
-    final visible = _visible;
-    final core = ref.watch(playerCoreProvider);
-    final recent = ref.watch(playHistoryProvider).items.take(10).toList();
-    final current = core.current;
-
+    if (_songs == null) {
+      return const Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 12),
+          Text('正在扫描本机音乐…', style: TextStyle(fontSize: 12)),
+        ]),
+      );
+    }
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
-        // 头部（歌单条 + 标题）+ 歌曲列表
         itemCount: visible.length + 1,
         itemBuilder: (context, i) {
           if (i == 0) {
-            return Column(children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                child: PlaylistsStrip(),
-              ),
-              // 「继续聆听」：最近播放的横向快捷卡片
-              // （从发现页搬来——曲库才是"我的东西"的家）
-              if (recent.isNotEmpty) ...[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text('继续聆听',
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15)),
-                  ),
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(children: [
+                Text(
+                  _query.isNotEmpty
+                      ? '搜索结果（${visible.length}）'
+                      : '本机歌曲（${visible.length}）',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 14),
                 ),
-                SizedBox(
-                  height: 148,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: recent.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 12),
-                    itemBuilder: (context, i) {
-                      final h = recent[i];
-                      return _RecentCard(
-                        title: h.title,
-                        artist: h.artist,
-                        onTap: () {
-                          final items = [
-                            for (final x in recent)
-                              PlayerItem(
-                                title: x.title,
-                                artist: x.artist,
-                                sourceId: x.sourceId,
-                                musicId: x.musicId,
-                                album: x.album,
-                                artUri: (x.picUrl == null || x.picUrl!.isEmpty)
-                                    ? null
-                                    : Uri.tryParse(x.picUrl!),
-                                duration: x.durationMs == null
-                                    ? null
-                                    : Duration(milliseconds: x.durationMs!),
-                              ),
-                          ];
-                          ref.read(playerCoreProvider).setQueue(items, index: i);
-                          Navigator.of(context).push(MaterialPageRoute<void>(
-                              builder: (_) => const PlayerPage()));
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                child: Row(children: [
-                  Text(
-                    _query.isNotEmpty
-                        ? '搜索结果（${visible.length}）'
-                        : '本机歌曲（${visible.length}）',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${_sort.label}${_ascending ? ' ↑' : ' ↓'}',
+                const Spacer(),
+                Text('${_sort.label}${_ascending ? ' ↑' : ' ↓'}',
                     style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                ]),
-              ),
-              if (visible.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    _query.isNotEmpty
-                        ? '没有匹配「$_query」的歌曲'
-                        : (_songs!.isEmpty
-                            ? '本机没有扫描到音频文件。把 mp3/flac 放进「音乐」目录后下拉重试。'
-                            : '没有歌曲'),
-                  ),
-                ),
-            ]);
+                        fontSize: 11, color: scheme.onSurfaceVariant)),
+              ]),
+            );
           }
           final s = visible[i - 1];
-          final playing = current?.sourceId == 'local' &&
-              current?.musicId == '${s.id}';
+          final playing =
+              current?.sourceId == 'local' && current?.musicId == '${s.id}';
           final selected = _selected.contains(s.id);
 
-          return ListTile(
-            selected: selected,
-            selectedTileColor: Theme.of(context)
-                .colorScheme
-                .secondaryContainer
-                .withValues(alpha: 0.5),
-            leading: _batchMode
-                ? Checkbox(
-                    value: selected,
-                    onChanged: (_) => _toggleSelect(s.id),
-                  )
-                : CoverImage(bytes: _artOf(s), size: 44, radius: 6),
-            title: Row(children: [
-              if (playing) ...[
-                Icon(Icons.graphic_eq,
-                    size: 14, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 6),
-              ],
-              Expanded(
-                child: Text(
-                  s.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: playing
-                      ? TextStyle(
-                          color: Theme.of(context).colorScheme.primary,
-                          fontWeight: FontWeight.w600)
-                      : null,
-                ),
-              ),
-            ]),
-            subtitle: Text(
-              '${s.artist ?? '未知歌手'} · ${_fmt(Duration(milliseconds: s.duration ?? 0))}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          return Dismissible(
+            key: ValueKey('song_${s.id}'),
+            direction: _batchMode
+                ? DismissDirection.none
+                : DismissDirection.endToStart,
+            background: Container(
+              color: scheme.errorContainer,
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 20),
+              child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
             ),
-            trailing: _batchMode
-                ? null
-                : IconButton(
-                    icon: Icon(Icons.play_circle_outline,
-                        size: 22,
-                        color: Theme.of(context).colorScheme.primary),
-                    tooltip: '播放',
-                    onPressed: () {
-                      if (s.data.isEmpty) return;
-                      _play(visible, i - 1);
-                    },
-                  ),
-            onTap: () {
-              if (_batchMode) {
-                _toggleSelect(s.id);
-              } else if (s.data.isNotEmpty) {
-                _play(visible, i - 1);
-              }
-            },
-            // 长按进入批量选择（参考栖弦 song_row 的 batchMode 手势）
-            onLongPress: () {
-              setState(() {
-                _batchMode = true;
-                _selected.add(s.id);
-              });
-            },
+            // 从曲库隐藏（不删物理文件），二次确认
+            confirmDismiss: (_) => _confirmHideSong(s),
+            child: ListTile(
+              selected: selected,
+              selectedTileColor:
+                  scheme.secondaryContainer.withValues(alpha: 0.5),
+              leading: _batchMode
+                  ? Checkbox(
+                      value: selected,
+                      onChanged: (_) => _toggleSelect(s.id),
+                    )
+                  : CoverImage(bytes: _artOf(s), size: 44, radius: 6),
+              title: Row(children: [
+                if (playing) ...[
+                  Icon(Icons.graphic_eq, size: 14, color: scheme.primary),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  child: Text(s.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: playing
+                          ? TextStyle(
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w600)
+                          : null),
+                ),
+              ]),
+              subtitle: Text(
+                  '${s.artist ?? '未知歌手'} · ${_fmt(Duration(milliseconds: s.duration ?? 0))}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+              trailing: _batchMode
+                  ? null
+                  : IconButton(
+                      icon: Icon(Icons.play_circle_outline,
+                          size: 22, color: scheme.primary),
+                      tooltip: '播放',
+                      onPressed: () {
+                        if (s.data.isEmpty) return;
+                        _play(visible, i - 1);
+                      },
+                    ),
+              onTap: () {
+                if (_batchMode) {
+                  _toggleSelect(s.id);
+                } else if (s.data.isNotEmpty) {
+                  _play(visible, i - 1);
+                }
+              },
+              onLongPress: () {
+                setState(() {
+                  _batchMode = true;
+                  _selected.add(s.id);
+                });
+              },
+            ),
           );
         },
       ),
     );
+  }
+
+  /// 从曲库隐藏一首本机歌曲（不删物理文件），二次确认。
+  Future<bool> _confirmHideSong(SongModel s) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('从曲库移除？'),
+        content: Text('「${s.title}」将不再显示在曲库中（不会删除手机里的文件）。\n'
+            '如需彻底删除，请在系统文件管理器中操作。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('移除')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      setState(() => _hiddenSongs.add(s.id));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('已从曲库移除'),
+          duration: Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+      return true;
+    }
+    return false;
   }
 
   static String _fmt(Duration d) {
@@ -663,51 +785,4 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   }
 }
 
-class _RecentCard extends StatelessWidget {
-  const _RecentCard(
-      {required this.title, required this.artist, required this.onTap});
-  final String title;
-  final String artist;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 132,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Container(
-            width: double.infinity,
-            height: 64,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              gradient: const LinearGradient(
-                colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6)],
-              ),
-            ),
-            child: const Icon(Icons.music_note, color: Colors.white),
-          ),
-          const SizedBox(height: 6),
-          Text(title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13)),
-          Text(artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: scheme.onSurfaceVariant, fontSize: 11)),
-        ]),
-      ),
-    );
-  }
-}
 

@@ -411,49 +411,69 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
         if (grouped.containsKey(f)) f,
     ];
 
-    Widget tileFor(Playlist p) => SizedBox(
-          height: 56,
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            // 性能：12 个歌单各下一张网络封面会让首帧掉到秒级，
-            // 歌单条目用图标占位即可。
-            leading: Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(8),
-                color: scheme.surfaceContainerHighest,
-              ),
-              child: Icon(
-                p.system ? Icons.star_outline : Icons.queue_music,
-                size: 20,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            title: Text(p.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 14)),
-            subtitle: Text('${p.entries.length} 首',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
-            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-              // 移动到文件夹 / 移出文件夹
-              IconButton(
-                tooltip: p.folder == null ? '移到文件夹' : '移出文件夹',
-                visualDensity: VisualDensity.compact,
-                icon: Icon(
-                  p.folder == null ? Icons.drive_file_move_outline : Icons.folder_off_outlined,
-                  size: 18,
+    // 每个歌单都可删除（系统收藏不可删，由 service 拦截并给出提示）。
+    // 左滑删除 + 长按菜单，两条路径都走二次确认。
+    Widget tileFor(Playlist p) => Dismissible(
+          key: ValueKey('pl_${p.id}'),
+          // 系统歌单（各人的「我的收藏」）禁止左滑，避免误删收藏
+          direction:
+              p.system ? DismissDirection.none : DismissDirection.endToStart,
+          background: Container(
+            color: scheme.errorContainer,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
+          ),
+          confirmDismiss: (_) => _confirmDeletePlaylist(p),
+          child: SizedBox(
+            height: 56,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              // 性能：12 个歌单各下一张网络封面会让首帧掉到秒级，
+              // 歌单条目用图标占位即可。
+              leading: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: scheme.surfaceContainerHighest,
+                ),
+                child: Icon(
+                  p.system ? Icons.star_outline : Icons.queue_music,
+                  size: 20,
                   color: scheme.onSurfaceVariant,
                 ),
-                onPressed: () => _moveToFolder(p),
               ),
-              Icon(Icons.chevron_right,
-                  size: 18, color: scheme.onSurfaceVariant),
-            ]),
-            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => PlaylistDetailPage(playlistId: p.id))),
+              title: Text(p.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 14)),
+              subtitle: Text('${p.entries.length} 首',
+                  style:
+                      TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                // 移动到文件夹 / 移出文件夹
+                IconButton(
+                  tooltip: p.folder == null ? '移到文件夹' : '移出文件夹',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(
+                    p.folder == null
+                        ? Icons.drive_file_move_outline
+                        : Icons.folder_off_outlined,
+                    size: 18,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  onPressed: () => _moveToFolder(p),
+                ),
+                Icon(Icons.chevron_right,
+                    size: 18, color: scheme.onSurfaceVariant),
+              ]),
+              onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                  builder: (_) => PlaylistDetailPage(playlistId: p.id))),
+              // 长按：删除歌单（系统收藏不提供）
+              onLongPress: p.system ? null : () => _confirmDeletePlaylist(p),
+            ),
           ),
         );
 
@@ -555,6 +575,50 @@ class _PlaylistsStripState extends ConsumerState<PlaylistsStrip> {
   }
 
   // ————————————————— 文件夹操作 —————————————————
+
+  /// 删除歌单（二次确认）。系统歌单不可删，直接给提示。
+  Future<bool> _confirmDeletePlaylist(Playlist p) async {
+    if (p.system) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('「我的收藏」是系统歌单，不能删除'),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 2),
+        ));
+      }
+      return false;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('删除歌单「${p.name}」？'),
+        content: Text(p.entries.isEmpty
+            ? '该歌单为空。'
+            : '歌单内 ${p.entries.length} 首会一并移除（不会删除本地文件）。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (ok == true) {
+      ref.read(playlistsProvider).delete(p.id);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('已删除「${p.name}」'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+      return true;
+    }
+    return false;
+  }
 
   Future<void> _createFolder() async {
     final controller = TextEditingController();

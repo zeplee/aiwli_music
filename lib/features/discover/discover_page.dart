@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app_providers.dart';
 import '../../core/models/music.dart';
+import '../../sources/builtin/board_songs.dart';
+import '../../sources/builtin/builtin_boards.dart';
 import 'daily_recommend.dart';
 import '../../../player/player_core.dart';
 import '../player/player_page.dart';
-import 'board_songs_page.dart';
 
 /// 发现页：顶部搜索 → 每日推荐 Hero → 排行榜横滑（脚本能力驱动）→
 /// 今日热门（飙升榜）→ 继续聆听 → 快速播放 → 音源状态。
@@ -25,6 +26,9 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
   /// 所以按"已安装的源"切换——对齐 lx 的 base-selection
   /// 与栖弦的 DiscoverySourceSelector。
   String? _selectedSourceId;
+
+  /// 榜单当前查看的平台（内置榜单，与脚本源选择独立）。
+  String _boardSource = 'kw';
 
   /// 当前生效的源：优先用户选择，否则回落活跃源。
   String? _effectiveSourceId() {
@@ -110,81 +114,21 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             },
           ),
         ),
-        // —— 排行榜（脚本驱动：导入的音源声明 boardList/boardSongs 才显示）——
-        // key 绑定源 id：切换音源时重建 FutureBuilder，重新拉取该源的榜单
-        if (ref.watch(sourceRegistryProvider).activeRuntime != null)
-          FutureBuilder<List<MusicBoard>>(
-            key: ValueKey('boards_${_effectiveSourceId()}'),
-            future: () async {
-              // 用选中源（_effectiveSourceId），而不是固定的 activeRuntime，
-              // 否则切换音源后排行榜不跟着变。
-              final reg = ref.read(sourceRegistryProvider);
-              final id = _effectiveSourceId();
-              final lx = id == null ? null : reg.runtimeOf(id);
-              if (lx == null) return const <MusicBoard>[];
-              return await lx.boardListFromScript() ?? const <MusicBoard>[];
-            }(),
-            builder: (context, snap) {
-              final boards = snap.data;
-              if (boards == null || boards.isEmpty) return const SizedBox.shrink();
-              return Column(children: [
-                const _SectionHeader('排行榜'),
-                SizedBox(
-                  height: 150,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    itemCount: boards.length,
-                    itemBuilder: (context, i) {
-                      final board = boards[i];
-                      final gradients = const [
-                        [Color(0xFF5B8DEF), Color(0xFF8B5CF6)],
-                        [Color(0xFFE57373), Color(0xFF8B5CF6)],
-                        [Color(0xFF26A69A), Color(0xFF5B8DEF)],
-                        [Color(0xFF8B5CF6), Color(0xFFE0A3C8)],
-                      ];
-                      return InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                            builder: (_) => BoardSongsPage(
-                                bangId: board.id, boardName: board.name))),
-                        child: Container(
-                          width: 128,
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: gradients[i % gradients.length],
-                            ),
-                          ),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                const Icon(Icons.trending_up, color: Colors.white),
-                                Text(board.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold)),
-                              ]),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                // —— 今日热门（脚本首榜 Top10）——
-                const _SectionHeader('今日热门'),
-                _HotSongsSection(
-                    sourceId: _effectiveSourceId(),
-                    boardId: boards.first.id,
-                    boardName: boards.first.name),
-              ]);
-            },
-          ),
+        // —— 排行榜：**内置五平台**（不依赖 lx 脚本）——
+        //
+        // 之前完全依赖脚本 boardList，脚本后端一失效榜单就整块消失
+        // （用户遇到的 sayqz 域名 NXDOMAIN 就是这种情况）。
+        // 现在用各平台官方榜单接口，脚本只作为额外补充。
+        const _SectionHeader('排行榜'),
+        _BuiltinBoardRow(
+          selectedSource: _boardSource,
+          onSelect: (v) => setState(() => _boardSource = v),
+        ),
+        _BuiltinHotSongs(
+          sourceId: _boardSource,
+          board: BuiltinBoards.catalog[_boardSource]!.first,
+        ),
+
         // 注：「我的歌单」与「继续聆听」已移到「曲库」Tab。
         // 发现页职责 = 纯推荐（每日推荐 / 排行榜 / 今日热门），
         // 避免推荐流里混入"我自己的内容"。
@@ -347,92 +291,6 @@ class _DailyRecommendCardState extends State<_DailyRecommendCard> {
 }
 
 /// 今日热门：脚本首榜 Top10（零内置源，能力由导入脚本声明）。
-class _HotSongsSection extends ConsumerWidget {
-  const _HotSongsSection({
-    required this.sourceId,
-    required this.boardId,
-    required this.boardName,
-  });
-  final String? sourceId;
-  final String boardId;
-  final String boardName;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final reg = ref.watch(sourceRegistryProvider);
-    final lx = sourceId == null ? null : reg.runtimeOf(sourceId!);
-    if (lx == null) return const SizedBox.shrink();
-    return FutureBuilder<List<MusicInfo>?>(
-      future: lx.boardSongsFromScript(boardId, limit: 10),
-      builder: (context, snap) {
-        if (snap.connectionState != ConnectionState.done) {
-          return const Padding(
-            padding: EdgeInsets.all(24),
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        if (snap.hasError) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text('榜单加载失败（音源网络波动）',
-                style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 12)),
-          );
-        }
-        final songs = snap.data ?? const <MusicInfo>[];
-        return Column(children: [
-          for (var i = 0; i < songs.length; i++)
-            ListTile(
-              leading: SizedBox(
-                width: 26,
-                child: Text('${i + 1}',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: i < 3
-                            ? Theme.of(context).colorScheme.primary
-                            : Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.bold)),
-              ),
-              title: Text(songs[i].title,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              subtitle: Text(songs[i].artist,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              onTap: () {
-                final core = ref.read(playerCoreProvider);
-                final items = [
-                  for (final m in songs)
-                    PlayerItem(
-                        title: m.title,
-                        artist: m.artist,
-                        sourceId: m.sourceId,
-                        musicId: m.musicId,
-                        artUri: m.album?.picUrl == null ||
-                                m.album!.picUrl!.isEmpty
-                            ? null
-                            : Uri.tryParse(m.album!.picUrl!),
-                        raw: m.raw),
-                ];
-                core.setQueue(items, index: i);
-                Navigator.of(context).push(MaterialPageRoute<void>(
-                    builder: (_) => const PlayerPage()));
-              },
-            ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextButton.icon(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => BoardSongsPage(
-                      bangId: boardId, boardName: boardName))),
-              icon: const Icon(Icons.list, size: 18),
-              label: const Text('查看完整榜单'),
-            ),
-          ),
-        ]);
-      },
-    );
-  }
-}
 
 /// 音源分段选择器（对齐栖弦 DiscoverySourceSelector 的胶囊样式）。
 /// 横向可滚动，左侧滑块跟随选中项；源多时不挤压布局。
@@ -493,5 +351,161 @@ class _SourceSelector extends ConsumerWidget {
         },
       ),
     );
+  }
+}
+
+/// 榜单平台切换（内置五平台）。
+class _BuiltinBoardRow extends StatelessWidget {
+  const _BuiltinBoardRow({required this.selectedSource, required this.onSelect});
+  final String selectedSource;
+  final ValueChanged<String> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final ids = BuiltinBoards.catalog.keys.toList();
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: ids.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final id = ids[i];
+          final active = id == selectedSource;
+          return InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: () => onSelect(id),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: active
+                    ? scheme.secondaryContainer
+                    : scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Center(
+                child: Text(
+                  BuiltinBoards.labels[id] ?? id,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                    color: active
+                        ? scheme.onSecondaryContainer
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 内置榜单的曲目列表（真实可播，不依赖脚本）。
+class _BuiltinHotSongs extends ConsumerStatefulWidget {
+  const _BuiltinHotSongs({required this.sourceId, required this.board});
+  final String sourceId;
+  final MusicBoard board;
+
+  @override
+  ConsumerState<_BuiltinHotSongs> createState() => _BuiltinHotSongsState();
+}
+
+class _BuiltinHotSongsState extends ConsumerState<_BuiltinHotSongs> {
+  List<MusicInfo>? _songs;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BuiltinHotSongs old) {
+    super.didUpdateWidget(old);
+    if (old.sourceId != widget.sourceId || old.board.id != widget.board.id) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _songs = null;
+    });
+    final songs =
+        await BoardSongs.fetch(widget.sourceId, widget.board.id, limit: 20);
+    if (!mounted) return;
+    setState(() {
+      _songs = songs;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.all(24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    final songs = _songs ?? const <MusicInfo>[];
+    if (songs.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Text('榜单暂时取不到（平台接口波动）',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      );
+    }
+    return Column(children: [
+      for (var i = 0; i < songs.length && i < 10; i++)
+        ListTile(
+          dense: true,
+          leading: SizedBox(
+            width: 24,
+            child: Text('${i + 1}',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: i < 3 ? scheme.primary : scheme.onSurfaceVariant)),
+          ),
+          title: Text(songs[i].title,
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(songs[i].artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11)),
+          trailing: Icon(Icons.play_arrow, size: 18, color: scheme.primary),
+          onTap: () {
+            final items = [
+              for (final m in songs)
+                PlayerItem(
+                  title: m.title,
+                  artist: m.artist,
+                  sourceId: m.sourceId,
+                  musicId: m.musicId,
+                  album: m.album?.name,
+                  artUri: (m.album?.picUrl == null || m.album!.picUrl!.isEmpty)
+                      ? null
+                      : Uri.tryParse(m.album!.picUrl!),
+                  duration: m.duration,
+                  raw: m.raw,
+                ),
+            ];
+            ref.read(playerCoreProvider).setQueue(items, index: i);
+            Navigator.of(context).push(MaterialPageRoute<void>(
+                builder: (_) => const PlayerPage()));
+          },
+        ),
+    ]);
   }
 }

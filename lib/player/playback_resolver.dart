@@ -305,7 +305,12 @@ class PlaybackResolver {
         try {
           await lx.waitInited();
           if (lx.supportsPlatform(sourceId)) candidates.add(lx);
-        } catch (_) {}
+        } catch (e) {
+          // 不能静默：初始化超时/报错的源会被排除在候选之外，
+          // 若全部源都这样，上层只会看到笼统的"取链失败"，
+          // 无法判断是"源初始化挂了"还是"接口没数据"。
+          AppLog.w('Resolve', '源 ${lx.id} 初始化失败，已跳过候选: $e');
+        }
       }
     } else {
       if (excludeIds.contains(sourceId) || _isDead(sourceId)) return null;

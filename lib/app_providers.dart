@@ -247,7 +247,10 @@ class LyricService extends SafeNotifier {
           try {
             lrc = await lx.getLyricFromScript(MusicInfo(
                 sourceId: sourceId, musicId: musicId, title: '', artist: ''));
-          } catch (_) {}
+          } catch (e) {
+            // 用户反馈"歌词没有"时，需要区分是脚本取词失败还是内置源无词
+            AppLog.w('Lyric', '脚本取词失败（将回退内置源）: $e');
+          }
         }
       }
       // ② 脚本没有/为空 → 内置多平台歌词（含翻译、罗马音）
