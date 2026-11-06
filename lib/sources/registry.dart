@@ -175,7 +175,14 @@ class SourceRegistry extends SafeNotifier {
         id: src.id, name: src.name, script: src.script, musicFree: src.musicFree);
     // 后台预热 inited，不阻塞 UI
     unawaited(_runtimes[src.id]!.waitInited().then((ok) {
-      AppLog.i('SourceRegistry', '源 ${src.name} inited=$ok');
+      // 记录声明的平台与 action：排查「为什么取链只试了一个源」时，
+      // 这一行是唯一能说明"该脚本是否支持这个平台"的证据。
+      final rt = _runtimes[src.id];
+      AppLog.i(
+          'SourceRegistry',
+          '源 ${src.name} inited=$ok '
+              'platforms=${rt?.platforms.join(",")} '
+              'actions=${rt?.actions.join(",")}');
     }));
   }
 

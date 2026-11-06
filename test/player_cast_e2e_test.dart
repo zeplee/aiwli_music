@@ -517,6 +517,70 @@ void main() {
   // ————————————————————————————————————————————————
   // 基本状态机
   // ————————————————————————————————————————————————
+  // ————————————————————————————————————————————————
+  // 红条观感：换源成功后不应留下错误态
+  // ————————————————————————————————————————————————
+  group('换源成功不留红条', () {
+    test('换源成功后 state.error 必须为 null（否则 UI 会挂红条）', () async {
+      var round = 0;
+      core = PlayerCore(
+        engine: engine,
+        cast: cast,
+        urlResolver: (item, exclude) async {
+          round++;
+          return ResolvedPlayback(
+            url: round == 1
+                ? 'https://dead.example/1.mp3'
+                : 'https://live.example/1.mp3',
+            sourceId: 'kw',
+            winnerId: '源$round',
+            winnerPlatform: 'kw',
+            sourceLabel: '酷我',
+            musicId: item.musicId,
+            title: item.title,
+            artist: item.artist,
+          );
+        },
+        onSourceUnplayable: (r, e) {},
+      );
+      engine.failingUrls.add('https://dead.example/1.mp3');
+
+      await core.setQueue([_item('换源救回的歌', '歌手', '1')]);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(round, greaterThan(1), reason: '应发生换源');
+      expect(core.state.value.error, isNull,
+          reason: '换源成功后不能留下 error，否则播放页会弹红条');
+      expect(core.state.value.processing, isNot(EngineProcessing.error));
+    });
+
+    test('全部失败时 state.error 才非 null（此时红条合理）', () async {
+      core = PlayerCore(
+        engine: engine,
+        cast: cast,
+        urlResolver: (item, exclude) async => ResolvedPlayback(
+          url: 'https://always-dead.example/1.mp3',
+          sourceId: 'kw',
+          winnerId: '唯一源',
+          winnerPlatform: 'kw',
+          sourceLabel: '酷我',
+          musicId: item.musicId,
+          title: item.title,
+          artist: item.artist,
+        ),
+        onSourceUnplayable: (r, e) {},
+      );
+      engine.failingUrls.add('https://always-dead.example/1.mp3');
+
+      await core.setQueue([_item('彻底播不了', '歌手', '1')]);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+
+      expect(core.state.value.error, isNotNull,
+          reason: '确实失败时应有错误，让用户知道原因');
+      expect(core.state.value.processing, EngineProcessing.error);
+    });
+  });
+
   group('队列与状态', () {
     test('playAt 越界不崩溃', () async {
       await core.setQueue([_item('只有一首', '歌手', '1')]);

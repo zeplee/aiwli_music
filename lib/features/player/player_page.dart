@@ -91,9 +91,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           body: ValueListenableBuilder<PlayerUiState>(
           valueListenable: core.state,
           builder: (context, s, _) {
-            // 错误改成底部浮层：只在真正失败时弹一次，不占布局高度，
-            // 也不复述 mpv 英文原文（用户不需要看 "Failed to..."）。
-            if (s.error != null && s.error != _lastShownError) {
+            // 错误提示分两级，避免"已在播还挂红条"的干扰：
+            //
+            //   换源中/中途 error → 不弹任何东西。界面本身已有
+            //     "正在获取播放地址…"，用户能看到它在努力。
+            //   真失败（processing=error）→ 才弹红条。
+            //
+            // 之前只要 s.error 非空就弹，而换源过程会短暂带 error，
+            // 于是换源成功后红条仍要挂满 3 秒——观感很差。
+            final isRealFailure =
+                s.error != null && s.processing == EngineProcessing.error;
+            if (isRealFailure && s.error != _lastShownError) {
               _lastShownError = s.error;
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (!mounted) return;
@@ -101,7 +109,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 messenger
                   ?..hideCurrentSnackBar()
                   ..showSnackBar(SnackBar(
-                    content: const Text('这首暂时播不了，已自动换源重试'),
+                    // 不复述 mpv 英文原文，给用户能理解的说法
+                    content: const Text('这首歌暂时播不了，换源后仍无法播放'),
                     duration: const Duration(seconds: 3),
                     behavior: SnackBarBehavior.floating,
                     backgroundColor: Theme.of(context).colorScheme.error,
@@ -112,6 +121,8 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   ));
               });
             }
+            // 恢复播放后重置去重标记：下次真失败仍要能弹出
+            if (s.error == null && s.playing) _lastShownError = null;
             // 封面变化 → 重新提取主色（动态主题 + 背景模糊）
             _syncPalette(item?.artUri?.toString());
 

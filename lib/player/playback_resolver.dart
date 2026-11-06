@@ -274,22 +274,42 @@ class PlaybackResolver {
     AppLog.w('Resolve', '本源取链失败，用时 ${total.elapsedMilliseconds}ms，进入换源');
 
     // —— 2. 换源：按歌名+歌手在其余源里搜索 ——
+    //
+    // 这里原先用 `for await` **串行**尝试每个候选平台：4 个平台各 500ms
+    // 就是 2 秒起步，全失败时用户等到的是"点了半天才有红条"。
+    // 改为并发：任一平台成功即采用，全部失败再抛错——这才符合
+    // "把所有源都扫一遍再说失败"的预期，耗时也从 Σ 变成 max。
     final candidates = await _findOtherSources(title, artist,
         exclude: {sourceId, ...excludeIds});
+    final todo = <MusicInfo>[];
     for (final c in candidates) {
-      if (tried.contains(_label(c.sourceId))) continue;
-      tried.add(_label(c.sourceId));
-      onToggle?.call(_label(c.sourceId));
-      final r = await _tryOne(
-        title: c.title,
-        artist: c.artist,
-        sourceId: c.sourceId,
-        musicId: c.musicId,
-        quality: quality,
-        raw: raw,
-        excludeIds: {...excludeIds, sourceId},
-      );
-      if (r != null) {
+      final label = _label(c.sourceId);
+      if (tried.contains(label)) continue;
+      tried.add(label);
+      onToggle?.call(label);
+      todo.add(c);
+    }
+    if (todo.isNotEmpty) {
+      final results = await Future.wait(todo.map((c) async {
+        try {
+          return await _tryOne(
+            title: c.title,
+            artist: c.artist,
+            sourceId: c.sourceId,
+            musicId: c.musicId,
+            quality: quality,
+            raw: raw,
+            excludeIds: {...excludeIds, sourceId},
+          );
+        } catch (_) {
+          return null;
+        }
+      }));
+
+      for (var i = 0; i < todo.length; i++) {
+        final r = results[i];
+        if (r == null) continue;
+        final c = todo[i];
         total.stop();
         AppLog.i('Resolve',
             '换源成功 $sourceId → ${c.sourceId}，总用时 ${total.elapsedMilliseconds}ms');

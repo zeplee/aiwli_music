@@ -354,6 +354,14 @@ class PlayerCore {
         return;
       }
     }
+    // 区分「真失败」与「换源已救回」：
+    // 换源成功后 _fallbackDone=true，引擎仍可能上报那条死链的残留
+    // error。若直接透传给 state，UI 会再弹一次红条——用户看到的就是
+    // "明明已经在播了，还挂着红条"，很干扰观感。
+    final swallowedByFallback = _fallbackDone && snap.error != null;
+    if (swallowedByFallback) {
+      AppLog.d('Error', '换源已成功，忽略残留 error: ${snap.error}');
+    }
     state.value = state.value.copyWith(
       processing: snap.processing,
       playing: snap.playing,
@@ -362,8 +370,8 @@ class PlayerCore {
       buffered: snap.buffered,
       // 引擎快照没有错误 = 当前健康；必须清掉旧错误，
       // 否则「播放正常但底部一直红字」。
-      error: snap.error,
-      clearError: snap.error == null,
+      error: swallowedByFallback ? null : snap.error,
+      clearError: swallowedByFallback || snap.error == null,
     );
     if (snap.processing == EngineProcessing.completed) {
       AppLog.i('Complete',

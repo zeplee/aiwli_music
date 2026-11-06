@@ -8,6 +8,7 @@ import '../../sources/builtin/builtin_boards.dart';
 import 'daily_recommend.dart';
 import '../../../player/player_core.dart';
 import '../player/player_page.dart';
+import '../mine/source_manage_page.dart';
 
 /// 发现页：顶部搜索 → 每日推荐 Hero → 排行榜横滑（脚本能力驱动）→
 /// 今日热门（飙升榜）→ 继续聆听 → 快速播放 → 音源状态。
@@ -40,10 +41,45 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     return reg.activeId;
   }
 
+  /// 是否有能力取链（决定"能不能真的播"）。
+  ///
+  /// 关键区分：发现页的榜单/推荐来自**内置接口**，零脚本也有内容；
+  /// 但取链（musicUrl）只走 lx 脚本。两者要分开判断。
+  bool _canPlay() => ref
+      .read(sourceRegistryProvider)
+      .enabledRuntimes
+      .any((r) => r.actions.contains('musicUrl'));
+
+  /// 没有取链能力时提前拦下并给出直达入口。
+  ///
+  /// 不这么做的话，用户点歌 → 进播放页 → 等取链失败 → 看到"资源失效"
+  /// 红条，却不知道真正原因是"没导入脚本"。
+  void _blockPlayAndExplain() {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('还没有可用的音源脚本，无法取到播放地址'),
+      behavior: SnackBarBehavior.floating,
+      duration: const Duration(seconds: 3),
+      action: SnackBarAction(
+        label: '去导入',
+        onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+            builder: (_) => const SourceManagePage())),
+      ),
+    ));
+  }
+
 
   @override
   Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
+    // 「能不能播」与「有没有内容」是两件事：
+    //   发现页的搜索/榜单/歌词/评论全部来自**内置接口**，零脚本也有内容
+    //   但取链（musicUrl）**只走 lx 脚本**（合规：壳不内置取链）
+    // 所以要显式区分这两种状态，否则用户会以为点一下就能听。
+    final registry = ref.watch(sourceRegistryProvider);
+    final canPlay = registry.enabledRuntimes
+        .any((r) => r.actions.contains('musicUrl'));
+    final enabledCount =
+        registry.installed.where((s) => s.enabled).length;
 
 
 
@@ -81,6 +117,51 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
             ),
           ),
         ),
+        // —— 无可用脚本时的说明条 ——
+        // 内置接口能提供浏览内容，但没有脚本就无法取到播放地址。
+        // 与其让用户点下去等 2ms 才报「资源失效」，不如提前说清楚。
+        if (!canPlay)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .secondaryContainer
+                    .withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(children: [
+                Icon(Icons.info_outline,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.onSecondaryContainer),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    enabledCount == 0
+                        ? '这里的榜单与推荐来自内置接口，可以浏览；'
+                            '播放需要在「我的 › 音源管理」导入脚本。'
+                        : '已启用 $enabledCount 个音源，但都未提供取链能力；'
+                            '播放需要支持取链的脚本。',
+                    style: TextStyle(
+                        fontSize: 12,
+                        height: 1.35,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSecondaryContainer),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                          builder: (_) => const SourceManagePage())),
+                  child: const Text('去导入', style: TextStyle(fontSize: 12)),
+                ),
+              ]),
+            ),
+          ),
+
         // —— 音源切换（榜单由脚本提供，多源时可切）——
         if ((ref.watch(sourceRegistryProvider).installed.where((s) => s.enabled).length) > 1)
           _SourceSelector(
@@ -93,6 +174,10 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
           child: _DailyRecommendCard(
             onPlayAll: (songs) {
               if (songs.isEmpty) return;
+              if (!_canPlay()) {
+                _blockPlayAndExplain();
+                return;
+              }
               core.setQueue([
                 for (final m in songs)
                   PlayerItem(
@@ -505,6 +590,26 @@ class _BuiltinHotSongsState extends ConsumerState<_BuiltinHotSongs> {
                   raw: m.raw,
                 ),
             ];
+            // 没有可用取链脚本时不要进播放页：
+            // 进去只会拿到"资源失效"红条，用户不知道真正原因。
+            final canPlay = ref
+                .read(sourceRegistryProvider)
+                .enabledRuntimes
+                .any((r) => r.actions.contains('musicUrl'));
+            if (!canPlay) {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: const Text('还没有可用的音源脚本，无法取到播放地址'),
+                behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 3),
+                action: SnackBarAction(
+                  label: '去导入',
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                          builder: (_) => const SourceManagePage())),
+                ),
+              ));
+              return;
+            }
             ref.read(playerCoreProvider).setQueue(items, index: i);
             Navigator.of(context).push(MaterialPageRoute<void>(
                 builder: (_) => const PlayerPage()));
