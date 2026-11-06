@@ -175,13 +175,30 @@ if (typeof console !== 'undefined') {
       rt.evaluate(MusicFreeShim.bootstrap);
       final meta = rt.evaluate('__mfLoadPlugin(${jsonEncode(script)});');
       final m = meta.stringResult;
-      _initedPayload = {
-        'sources': {
-          sourceId: {
-            'name': sourceId,
-            'actions': ['musicUrl', 'musicSearch'],
-          }
+      // MF 插件原本只声明自己那个 `mf-xxx` 标识，导致它对**内置榜单**
+      // 的曲目（sourceId=kw/tx/wy/kg/mg）完全不参与取链：
+      // `supportsPlatform('kw')` 永远 false。
+      //
+      // 但 MF 插件的取链签名是 `getMediaSource(musicItem, quality)`——
+      // 根本不吃平台参数，插件自己就是单一平台的实现。所以它天然能处理
+      // 对应标准平台的曲目，只是声明没对上。
+      //
+      // 这里额外补一个标准平台 key（由 id/名称推断），让内置榜单能借用。
+      final platform = guessMusicFreePlatform(sourceId, script);
+      final srcs = <String, Map<String, Object?>>{
+        sourceId: {
+          'name': sourceId,
+          'actions': ['musicUrl', 'musicSearch'],
         },
+      };
+      if (platform != null) {
+        srcs[platform] = {
+          'name': '$sourceId (=> $platform)',
+          'actions': ['musicUrl'],
+        };
+      }
+      _initedPayload = {
+        'sources': srcs,
         'musicFreeMeta': m,
       };
       if (!initedCompleter.isCompleted) initedCompleter.complete(_initedPayload);
@@ -475,3 +492,47 @@ if (typeof console !== 'undefined') {
   }
 }
 
+
+
+/// 从 MusicFree 插件的 id / 源码推断它服务的标准平台。
+///
+/// 背景：MF 插件的 `getMediaSource(musicItem, quality)` 不接受平台参数，
+/// 一个插件就是一个平台的实现。它的 id 形如 `mf-酷我-念心音源`，
+/// 但宿主只把它当成平台标识，导致内置榜单（sourceId=kw）借不到它。
+///
+/// 判定策略（从严到宽，命中即返回）：
+///   1. id/名称里出现明确的中文或英文平台词
+///   2. 源码里出现该平台专属的接口域名（比名称更可靠）
+/// 识别不出就返回 null——宁可不映射，也不要把网易插件当酷我用。
+String? guessMusicFreePlatform(String id, String script) {
+  final key = id.toLowerCase();
+
+  // 平台专属域名：比名称可靠，优先用它
+  const domainHints = <String, List<String>>{
+    'kw': ['kuwo.cn', 'kwapi'],
+    'wy': ['music.163.com', '126.net'],
+    'tx': ['y.qq.com', 'gtimg.cn'],
+    'kg': ['kugou.com'],
+    'mg': ['migu.cn', 'nf.migu'],
+  };
+  for (final e in domainHints.entries) {
+    for (final d in e.value) {
+      if (script.contains(d)) return e.key;
+    }
+  }
+
+  // 名称/ID 关键词（中英都覆盖；顺序重要：qq 与 wy 不能同时命中）
+  const nameHints = <String, List<String>>{
+    'kw': ['酷我', 'kuwo'],
+    'wy': ['网易', 'netease', '163'],
+    'tx': ['qq', 'qq音乐', 'tencent'],
+    'kg': ['酷狗', 'kugou'],
+    'mg': ['咪咕', 'migu'],
+  };
+  for (final e in nameHints.entries) {
+    for (final k in e.value) {
+      if (key.contains(k)) return e.key;
+    }
+  }
+  return null;
+}
