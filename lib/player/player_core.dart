@@ -111,6 +111,17 @@ class PlayerCore {
   Set<String> _activeExcludes = const {};
   int _fallbackCount = 0;
   bool _fallbackInFlight = false;
+
+  /// 本曲已完成过换源回退。
+  ///
+  /// 之前用 `_activeResolved = null` 表达这件事，但那样会让
+  /// `_onEngineSnapshot` 的**陈旧事件守卫整体失效**：
+  ///   守卫条件是 `_activeResolved != null && cur != url`
+  /// 一旦为 null，旧 URL 迟到的 `error` / `playing=false` 全被放行，
+  /// 于是刚 `playing=true` 的新曲立刻被打回 false ——
+  /// 表现就是「播完一首后卡住不动」（真机日志实测：
+  ///  push playing=true → 立刻 push playing=false，反复循环）。
+  bool _fallbackDone = false;
   final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
@@ -227,12 +238,20 @@ class PlayerCore {
     if (cast == null) return;
     final s = state.value;
     final item = current;
-    final key = '${item?.sourceId}/${item?.musicId}|${s.playing}|${s.title}|${s.duration}';
+    // 去重 key 必须用**通知栏实际展示的数据**，不能用 s.title。
+    //
+    // s 是引擎快照状态，其中 title/artist 是「当前播放到哪」的展示字段，
+    // 在解析前后会频繁为空（见 setPlaying(false) 里 title: ''）——
+    // 旧 key 里拼 s.title 会让切歌后 key 不变，于是直接 return，
+    // 通知栏元数据永远停在上一首/空白（真机取证：android.title=null）。
+    final meta = item?.metadata;
+    final key = '${meta?.title}|${meta?.artist}|${meta?.album}|'
+        '${meta?.artUri}|${s.playing}|${s.duration}';
     if (key == _lastCastKey) return;
     _lastCastKey = key;
-    // 诊断：确认状态推送真的发生（真机排查"点了播放媒体会话不动"）
-    AppLog.d('Cast', 'push playing=${s.playing} title=${s.title}');
-    if (item != null) cast.updateNowPlaying(item.metadata);
+    AppLog.d('Cast',
+        'push playing=${s.playing} title=${meta?.title ?? '(空)'}');
+    if (meta != null) cast.updateNowPlaying(meta);
     cast.updatePlayback(
       playing: s.playing,
       position: s.position,
@@ -256,7 +275,8 @@ class PlayerCore {
     if (snap.processing == EngineProcessing.error &&
         snap.error != null &&
         _activeResolved != null &&
-        !_fallbackInFlight) {
+        !_fallbackInFlight &&
+        !_fallbackDone) {
       final resolved = _activeResolved!;
       if (resolved.sourceId != 'local' && resolved.sourceId != 'url') {
         unawaited(_fallbackOnEngineError(snap));
@@ -278,6 +298,10 @@ class PlayerCore {
       error: snap.error,
       clearError: snap.error == null,
     );
+    if (snap.processing == EngineProcessing.completed) {
+      AppLog.i('Complete',
+          '收到 completed expect=$_expectCompletion repeat=$_repeat idx=$_index/${_queue.length}');
+    }
     if (snap.processing == EngineProcessing.completed && _expectCompletion) {
       _expectCompletion = false;
       if (_endOfTrackPause) {
@@ -285,6 +309,7 @@ class PlayerCore {
         state.value = state.value.copyWith(playing: false);
         return;
       }
+      AppLog.i('Complete', '→ 触发自动下一首 idx=$_index/${_queue.length}');
       unawaited(next(auto: true));
     }
   }
@@ -301,9 +326,14 @@ class PlayerCore {
 
   Future<void> _loadAt(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    AppLog.d('Load', '_loadAt($index) gen=${_loadGeneration + 1} title=${_queue[index].title}');
     _index = index;
     final item = _queue[index];
     final gen = ++_loadGeneration;
+    // 新曲：重置回退状态
+    _fallbackDone = false;
+    _fallbackCount = 0;
+    _fallbackInFlight = false;
     state.value = state.value.copyWith(
       processing: EngineProcessing.loading,
       playing: false,
@@ -408,9 +438,11 @@ class PlayerCore {
       if (gen != _loadGeneration) return;
       await _engine.play();
       _expectCompletion = true;
-      // 回退成功：清掉旧 URL 留下的错误文本，并解除回退上下文——
-      // 防止旧 URL 的迟到 mpv 错误再触发一轮无谓回退。
-      _activeResolved = null;
+      // 回退成功：**保留** _activeResolved（陈旧事件守卫必须继续有效），
+      // 只用 _fallbackDone 标记"本曲已回退过"，防止旧 URL 的迟到错误
+      // 再触发一轮无谓回退。
+      _fallbackDone = true;
+      _fallbackInFlight = false;
       state.value = state.value.copyWith(
         processing: EngineProcessing.ready,
         error: null,
@@ -457,6 +489,7 @@ class PlayerCore {
   }
 
   Future<void> next({bool auto = false}) async {
+    AppLog.d('Next', 'next(auto=$auto) idx=$_index/${_queue.length} repeat=$_repeat');
     if (_queue.isEmpty) return;
     if (_repeat == RepeatMode.one && auto) return _loadAt(_index);
     if (_shuffle && _queue.length > 1) {
