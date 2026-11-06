@@ -101,8 +101,24 @@ class CommentSdk {
       );
       final body = tryDecodeJson(raw);
       if (body is! Map) return const [];
-      final list = body['hotComments'] ?? body['comments'];
-      if (list is! List) return const [];
+      // 不能写 `hotComments ?? comments`：
+      // 没有热评时接口返回的是**空数组**（不是 null），`??` 不会落到
+      // comments，于是整首歌被判定"无评论"。
+      // 实测（真机复现 3 首）：
+      //   无奈的思绪           hotComments=[] comments=3
+      //   山风山风等等我       hotComments=[] comments=4
+      //   你有没有真的爱过我   hotComments=[] comments=18
+      // 正确做法：优先热评，空则退回普通评论。
+      final hot = body['hotComments'];
+      final normal = body['comments'];
+      final List<dynamic> list;
+      if (hot is List && hot.isNotEmpty) {
+        list = hot;
+      } else if (normal is List && normal.isNotEmpty) {
+        list = normal;
+      } else {
+        return const [];
+      }
       final out = <CommentItem>[];
       for (final e in list) {
         if (e is! Map) continue;
