@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app_providers.dart';
@@ -29,18 +28,10 @@ class _SearchPageState extends ConsumerState<SearchPage>
     with TickerProviderStateMixin {
   final _focusNode = FocusNode();
 
-  @override
-  void initState() {
-    super.initState();
-    // 兜底：部分设备（如把指纹传感器识别为 physical keyboard 的机型）
-    // 会因"已连接硬件键盘"而抑制软键盘，即使 TextField 已获得焦点。
-    // 等首帧布局完成后再显式请求一次，交给系统决定是否显示。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _focusNode.requestFocus();
-      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
-    });
-  }
+  // 注意：不要在这里裸调 SystemChannels.textInput.invokeMethod('TextInput.show')。
+  // 绕过 TextField 自建的 TextInputConnection 会打乱 IME 连接状态，
+  // 反而导致"有焦点但输入不进去"（真机复现过）。
+  // autofocus + focusNode 已足够让 TextField 自己完成连接与请求。
   final _controller = TextEditingController();
   List<SourceGroup> _groups = const [];
   bool _loading = false;
