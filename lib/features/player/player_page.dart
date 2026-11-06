@@ -9,7 +9,6 @@ import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../core/ui/cover_palette.dart';
 import '../../player/models.dart';
-import 'lyric_settings.dart';
 import 'lyrics_view.dart';
 import '../../player/player_core.dart';
 import 'player_extras.dart';
@@ -151,39 +150,34 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     icon: const Icon(Icons.keyboard_arrow_down, size: 30),
                   ),
                   const Spacer(),
-                  // 播放队列已移到底部左下角（顶栏留给低频操作）
-                  // 倍速：非 1x 时高亮（一眼看出当前是变速播放）。
+                  // 播放队列已移到底部左下角（顶栏留给低频操作）。
                   //
-                  // 点击区必须撑到 48dp：原来只有 61x33，夹在两个 48dp 的
-                  // IconButton 中间，实测很难点中（Material 最小触控标准
-                  // 是 48x48）。用 minWidth/minHeight 保证，而不是加大
-                  // padding——后者会让文字周围留白过多、和图标不对齐。
-                  InkWell(
-                    onTap: () => showSpeedSheet(context),
-                    borderRadius: BorderRadius.circular(8),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        minWidth: 48,
-                        minHeight: 48,
-                      ),
-                      child: Center(
-                        widthFactor: 1,
-                        heightFactor: 1,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6),
-                          child: Text(
-                            s.speed == 1.0 ? '1.0x' : '${_fmtRate(s.speed)}x',
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: s.speed == 1.0
-                                    ? scheme.onSurfaceVariant
-                                    : scheme.primary),
-                          ),
-                        ),
-                      ),
+                  // 定时关闭：**只在激活时出现在顶栏**（对齐参考工程）。
+                  // 平时不占位——它一周用不了几次，常驻只是噪音；
+                  // 一旦开启就必须显眼，否则用户不知道几点会停。
+                  if (sleep.active)
+                    IconButton(
+                      tooltip: '定时关闭 · 剩余 ${_fmt(sleep.remaining)}',
+                      onPressed: () => showSleepTimerSheet(context),
+                      icon: Icon(Icons.bedtime,
+                          size: 20, color: scheme.primary),
                     ),
-                  ),
+                  // 倍速已移入封面操作菜单（与「切换播放音质」并列）。
+                  //
+                  // 理由：顶栏原本有 倍速/更多/添加歌单 三个元素，
+                  // 倍速那个 61x33 的文字按钮夹在 48dp 图标中间最难命中；
+                  // 而参考工程把同类操作（音质）都收在封面菜单里。
+                  // 唯一代价是「1.5x 常显」没了——但非 1x 时封面菜单里
+                  // 会写「当前 1.50x」，且播放页进度条不受影响。
+                  if (s.speed != 1.0)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Text('${_fmtRate(s.speed)}x',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: scheme.primary)),
+                    ),
                   // 其余低频操作收进「更多」，避免顶栏 6 个图标挤成一排
                   PopupMenuButton<String>(
                     tooltip: '更多',
@@ -197,8 +191,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                           showEqSheet(context);
                         case 'quality':
                           showQualitySheet(context);
-                        case 'lyric':
-                          showLyricSettingsSheet(context);
                       }
                     },
                     itemBuilder: (_) => [
@@ -224,15 +216,6 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                                   : scheme.onSurfaceVariant),
                           const SizedBox(width: 10),
                           Text(settings.eqEnabled ? '均衡器 · 已开启' : '均衡器'),
-                        ]),
-                      ),
-                      PopupMenuItem(
-                        value: 'lyric',
-                        child: Row(children: [
-                          Icon(Icons.text_fields,
-                              size: 18, color: scheme.onSurfaceVariant),
-                          const SizedBox(width: 10),
-                          const Text('歌词设置（字号 / 翻译）'),
                         ]),
                       ),
                       PopupMenuItem(
@@ -798,6 +781,18 @@ Future<void> _showCoverActions(BuildContext context, WidgetRef ref,
             onTap: () {
               Navigator.of(ctx).pop();
               showQualitySheet(context);
+            },
+          ),
+          // 播放速度也放进封面菜单（参考工程把音质放这里，我们多了倍速
+          // 这个差异功能）。顶栏因此可以少一个元素。
+          ListTile(
+            leading: const Icon(Icons.speed),
+            title: const Text('播放速度'),
+            subtitle: Text(
+                '当前 ${ref.read(playerCoreProvider).state.value.speed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '')}x'),
+            onTap: () {
+              Navigator.of(ctx).pop();
+              showSpeedSheet(context);
             },
           ),
           ListTile(

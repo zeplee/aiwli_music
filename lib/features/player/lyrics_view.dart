@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app_providers.dart';
+import 'lyric_settings.dart';
 import '../../core/lyric/lrc_parser.dart';
 import '../../core/models/lyric.dart';
 import '../../player/models.dart';
@@ -72,9 +73,42 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
       }
     }
 
-    return ValueListenableBuilder<PlayerUiState>(
-      valueListenable: core.state,
-      builder: (context, s, _) {
+    // 歌词设置入口放在歌词页内（右上角齿轮）：
+    // 原来只能从播放页顶栏「更多」进，用户在歌词页想调字号/翻译时
+    // 找不到入口——参考工程也是把歌词设置放在歌词面板里。
+    //
+    // 用 Stack 叠在内容之上，这样加载中/空歌词/正常三种状态都能进设置。
+    return Stack(
+      children: [
+        ValueListenableBuilder<PlayerUiState>(
+          valueListenable: core.state,
+          builder: (context, s, _) {
+            return _buildBody(context, lyric, s, scheme);
+          },
+        ),
+        Positioned(
+          top: 0,
+          right: 0,
+          child: IconButton(
+            tooltip: '歌词设置',
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            onPressed: () => showLyricSettingsSheet(context),
+            icon: Icon(Icons.tune, color: scheme.onSurfaceVariant),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 原 build 里的内容搬到这里（保持原逻辑，仅提取）。
+  Widget _buildBody(
+    BuildContext context,
+    dynamic lyric,
+    PlayerUiState s,
+    ColorScheme scheme,
+  ) {
+        final core = ref.read(playerCoreProvider);
         final doc = lyric.current.doc;
         if (lyric.current.loading) {
           return _tappable(context,
@@ -162,8 +196,6 @@ class _LyricsPanelState extends ConsumerState<LyricsPanel> {
             ),
           ],
         );
-      },
-    );
   }
 
   Widget _tappable(BuildContext context, {required Widget child}) {
