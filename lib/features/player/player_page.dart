@@ -432,6 +432,9 @@ class _SeekBar extends StatefulWidget {
 }
 
 class _SeekBarState extends State<_SeekBar> {
+  /// 与 SliderTheme 里 thumbShape 的半径保持一致。
+  static const double _thumbRadius = 6;
+
   double? _dragValue;
 
   @override
@@ -470,37 +473,58 @@ class _SeekBarState extends State<_SeekBar> {
                 )
               : null,
         ),
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            // 缓冲进度：已缓冲但未播放的部分用浅色叠加
-            if (bufferedRatio > 0.001)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(2),
-                  child: LinearProgressIndicator(
-                    value: bufferedRatio,
-                    minHeight: 3,
-                    backgroundColor: Colors.transparent,
-                    valueColor: AlwaysStoppedAnimation(
-                        scheme.onSurface.withValues(alpha: 0.22)),
+        // 轨道必须铺满整行、滑块中心能到达两端。
+        //
+        // Flutter Slider 默认给左右各留一个「thumb 宽度」的 padding
+        // （SliderTheme.padding 的文档写明：horizontal padding defaults to
+        // the width of the thumb shape）。于是：
+        //   · value=0 时滑块停在离左端一个 thumb 宽的位置 → 圆不在最开头
+        //   · 拖到最左也只是到那个 padding 边界 → 拖不到 0
+        // 用户反馈的两个症状都源于此。
+        //
+        // 修法：显式 padding=0 + 自定义 trackShape 铺满，
+        // 并让 thumb 用较小半径，避免 padding=0 时圆头被裁掉。
+        SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            padding: EdgeInsets.zero,
+            trackHeight: 3,
+            trackShape: const _FullWidthTrackShape(),
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // 缓冲进度：与轨道同宽，避免两套宽度错位
+              if (bufferedRatio > 0.001)
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: _thumbRadius),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      value: bufferedRatio,
+                      minHeight: 3,
+                      backgroundColor: Colors.transparent,
+                      valueColor: AlwaysStoppedAnimation(
+                          scheme.onSurface.withValues(alpha: 0.22)),
+                    ),
                   ),
                 ),
+              Slider(
+                value: value.clamp(0, max <= 0 ? 1 : max),
+                max: max <= 0 ? 1 : max,
+                // 加载中禁用拖动（规格 §2.2）
+                onChanged: widget.enabled && max > 0
+                    ? (v) => setState(() => _dragValue = v)
+                    : null,
+                onChangeEnd: (v) {
+                  widget.onChanged(v);
+                  setState(() => _dragValue = null);
+                },
               ),
-            Slider(
-              value: value.clamp(0, max <= 0 ? 1 : max),
-              max: max <= 0 ? 1 : max,
-              // 加载中禁用拖动（规格 §2.2）
-              onChanged: widget.enabled && max > 0
-                  ? (v) => setState(() => _dragValue = v)
-                  : null,
-              onChangeEnd: (v) {
-                widget.onChanged(v);
-                setState(() => _dragValue = null);
-              },
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
@@ -1035,5 +1059,54 @@ class PlayerBackdropVeil {
       mid: isLight ? 0.16 : 0.45,
       bottom: isLight ? 0.28 : 0.72,
     );
+  }
+}
+
+
+/// 铺满整行的滑轨：左右各让出半个 thumb 半径，
+/// 使「滑块圆心」在 value=0 / value=max 时正好贴到两端。
+///
+/// Flutter 默认的 RoundedRectSliderTrackShape 会把轨道两端再内缩，
+/// 加上 Slider 默认 padding，结果就是拖不到 0（真机反馈）。
+class _FullWidthTrackShape extends SliderTrackShape
+    with BaseSliderTrackShape {
+  const _FullWidthTrackShape();
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset offset, {
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required Animation<double> enableAnimation,
+    required TextDirection textDirection,
+    required Offset thumbCenter,
+    Offset? secondaryOffset,
+    bool isDiscrete = false,
+    bool isEnabled = false,
+    double additionalActiveTrackHeight = 2,
+  }) {
+    final rect = getPreferredRect(
+      parentBox: parentBox,
+      offset: offset,
+      sliderTheme: sliderTheme,
+      isEnabled: isEnabled,
+      isDiscrete: isDiscrete,
+    );
+    final radius = Radius.circular(rect.height / 2);
+
+    // 已播放部分：从左端到滑块圆心
+    final active = Rect.fromLTRB(rect.left, rect.top, thumbCenter.dx, rect.bottom);
+    // 未播放部分：从滑块圆心到右端
+    final inactive =
+        Rect.fromLTRB(thumbCenter.dx, rect.top, rect.right, rect.bottom);
+
+    final paintActive = Paint()..color = sliderTheme.activeTrackColor!;
+    final paintInactive = Paint()..color = sliderTheme.inactiveTrackColor!;
+
+    context.canvas.drawRRect(
+        RRect.fromRectAndRadius(active, radius), paintActive);
+    context.canvas.drawRRect(
+        RRect.fromRectAndRadius(inactive, radius), paintInactive);
   }
 }
