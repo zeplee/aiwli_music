@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app_providers.dart';
@@ -26,6 +27,20 @@ class SearchPage extends ConsumerStatefulWidget {
 
 class _SearchPageState extends ConsumerState<SearchPage>
     with TickerProviderStateMixin {
+  final _focusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // 兜底：部分设备（如把指纹传感器识别为 physical keyboard 的机型）
+    // 会因"已连接硬件键盘"而抑制软键盘，即使 TextField 已获得焦点。
+    // 等首帧布局完成后再显式请求一次，交给系统决定是否显示。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _focusNode.requestFocus();
+      SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    });
+  }
   final _controller = TextEditingController();
   List<SourceGroup> _groups = const [];
   bool _loading = false;
@@ -115,6 +130,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
       c.dispose();
     }
     _controller.dispose();
+    _focusNode.dispose();
     _tabs?.dispose();
     super.dispose();
   }
@@ -340,6 +356,10 @@ class _SearchPageState extends ConsumerState<SearchPage>
           child: TextField(
             key: const ValueKey('search_field'),
             controller: _controller,
+            // 进页面即聚焦：从发现页点搜索栏进来，用户意图就是"马上打字"，
+            // 不该再点一次输入框。
+            autofocus: true,
+            focusNode: _focusNode,
             textInputAction: TextInputAction.search,
             onSubmitted: (_) => unawaited(_search()),
             decoration: InputDecoration(

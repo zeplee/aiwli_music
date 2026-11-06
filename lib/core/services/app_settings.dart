@@ -30,6 +30,12 @@ class AppSettings extends SafeNotifier {
   /// 歌词对齐：true = 左对齐（参考栖弦 TextAlign.start），false = 居中。
   bool lyricAlignStart = false;
 
+  /// 封面页左下角显示三行迷你歌词（参考栖弦 showMiniLyrics）。
+  ///
+  /// 好处：不切页也能看到当前唱到哪，尤其车载/桌面看封面时。
+  /// 默认关：封面是视觉主体，歌词叠上去会抢注意力，交给用户决定。
+  bool showMiniLyrics = false;
+
   /// 主题模式：system = 跟随系统，light = 白天，dark = 夜间。
   ///
   /// 默认 system：现代系统自带日落后切换，跟着走最省心；
@@ -60,6 +66,7 @@ class AppSettings extends SafeNotifier {
     lyricRoman = m['lyricRoman'] != false;
     lyricSizeLevel = (m['lyricSizeLevel'] as num?)?.toInt() ?? 2;
     lyricAlignStart = m['lyricAlignStart'] == true;
+    showMiniLyrics = m['showMiniLyrics'] == true;
     final tm = m['themeMode']?.toString();
     if (tm == 'system' || tm == 'light' || tm == 'dark') themeMode = tm!;
     final dirs = m['localMusicDirs'] as List?;
@@ -84,6 +91,7 @@ class AppSettings extends SafeNotifier {
         'lyricRoman': lyricRoman,
         'lyricSizeLevel': lyricSizeLevel,
         'lyricAlignStart': lyricAlignStart,
+        'showMiniLyrics': showMiniLyrics,
         'themeMode': themeMode,
         'localMusicDirs': localMusicDirs,
         'sleepTimerMinutes': sleepTimerMinutes,
@@ -100,11 +108,16 @@ class AppSettings extends SafeNotifier {
   }
 
   Future<void> setLyricPrefs(
-      {bool? translation, bool? roman, int? sizeLevel, bool? alignStart}) async {
+      {bool? translation,
+      bool? roman,
+      int? sizeLevel,
+      bool? alignStart,
+      bool? miniLyrics}) async {
     if (translation != null) lyricTranslation = translation;
     if (roman != null) lyricRoman = roman;
     if (sizeLevel != null) lyricSizeLevel = sizeLevel.clamp(1, 4);
     if (alignStart != null) lyricAlignStart = alignStart;
+    if (miniLyrics != null) showMiniLyrics = miniLyrics;
     notifyListeners();
     await _flush();
   }
