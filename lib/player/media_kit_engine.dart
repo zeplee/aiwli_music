@@ -123,7 +123,9 @@ class MediaKitEngine implements AudioEngine {
       {Map<String, String>? headers, String? formatHint}) async {
     _source = source; // 同步赋值：旧歌的迟到异步事件靠它丢弃
     _emit(processing: EngineProcessing.loading, playing: false, position: Duration.zero);
-    await _player.open(Media(source.toString(), httpHeaders: headers ?? const {}));
+    final src = source.toString();
+    await _tuneNetworkCache(src);
+    await _player.open(Media(src, httpHeaders: headers ?? const {}));
     _emit(processing: EngineProcessing.ready);
     return _player.state.duration;
   }
@@ -169,6 +171,36 @@ class MediaKitEngine implements AudioEngine {
       chain.add('equalizer=f=${hz[i]}:w=1.0:t=q:g=${g.toStringAsFixed(2)}');
     }
     await platform.setProperty('af', chain.join(','));
+  }
+
+  /// 网络音源的缓冲调优。
+  ///
+  /// mpv 默认 cache=auto 在网络流上偏保守（几秒），遇到源站响应慢、
+  /// 或 App 退到后台被限流时容易 underrun → 音频一卡一卡。
+  /// 这里把缓冲窗口放大到 30s，并允许 mpv 在网速不够时降档播放
+  /// （而不是直接断流）。
+  ///
+  /// 只对 http(s) 生效：本地文件不需要，且 cache 在本地文件上
+  /// 反而会增加首播延迟。
+  Future<void> _tuneNetworkCache(String source) async {
+    if (!source.startsWith('http')) return;
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    try {
+      // 预读窗口：缓存 30 秒数据（默认 auto 常常只有 1~5 秒）
+      await platform.setProperty('cache', 'yes');
+      await platform.setProperty('cache-secs', '30');
+      // 缓冲不足时继续读，不要中途放弃（弱网容忍）
+      await platform.setProperty('cache-pause-initial', 'yes');
+      await platform.setProperty('cache-pause-wait', '3');
+      // 网络超时放宽：源站偶尔几秒不响应不应判死
+      await platform.setProperty('network-timeout', '60');
+      // 音频流按需降档，避免瞬间断流
+      await platform.setProperty('demuxer-max-bytes', '32MiB');
+      await platform.setProperty('demuxer-max-back-bytes', '8MiB');
+    } catch (_) {
+      // 老版本 mpv 没有这些属性：忽略，播放本身不受影响
+    }
   }
 
   @override

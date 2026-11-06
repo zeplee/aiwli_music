@@ -29,6 +29,16 @@ class FmsCast implements MediaSessionCast {
       await _session.activate();
       // 来电 / 拔耳机自动暂停与恢复（插件内置，无需自己接 audio_session 事件流）
       await _session.setAutoHandleInterruptions(true);
+
+      // 后台播放抗卡顿（关键）。
+      //
+      // 插件文档：背景保活会持有一把 partial wake lock（CPU）+
+      // high-perf Wi-Fi lock（射频），并把 Service 钉在前台，
+      // **整个会话期间有效，不随播放/暂停降级**。
+      // 不开的话：App 退到后台 → Service 被降级 → Android 的
+      // cached-app freezer 冻结进程 → decoders 停摆 → 音频一卡一卡。
+      // 默认是 false（为了省电），音乐播放器必须开。
+      await _session.setBackgroundKeepAlive(true);
       _activated = true;
 
       _session.setActionHandler(
