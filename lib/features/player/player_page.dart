@@ -105,6 +105,10 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     duration: const Duration(seconds: 3),
                     behavior: SnackBarBehavior.floating,
                     backgroundColor: Theme.of(context).colorScheme.error,
+                    // floating SnackBar 默认贴底，会盖住播放控制栏
+                    // （真机截图确认：暂停按钮下半截被遮）。
+                    // 往上抬 96 让出控制行 + 安全区。
+                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 96),
                   ));
               });
             }

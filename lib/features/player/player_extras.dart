@@ -6,8 +6,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../core/services/app_settings.dart';
+import '../../core/services/play_history_service.dart';
 import '../../player/models.dart';
+import '../../player/player_core.dart';
 import '../../player/providers.dart';
+import '../../core/ui/cover_image.dart';
 
 /// 音质档位选择（底部弹层）。
 Future<void> showQualitySheet(BuildContext context) {
@@ -25,29 +28,35 @@ class _QualitySheet extends ConsumerWidget {
     final settings = ref.watch(appSettingsProvider);
     final scheme = Theme.of(context).colorScheme;
     return SafeArea(
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Padding(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
             padding: const EdgeInsets.all(14),
-            child: Text('音质档位（脚本支持时生效）',
-                style: Theme.of(context).textTheme.titleMedium)),
-        RadioGroup<Quality>(
-          groupValue: settings.quality,
-          onChanged: (v) {
-            if (v != null) ref.read(appSettingsProvider).setQuality(v);
-          },
-          child: Column(
-            children: [
-              for (final q in Quality.values)
-                RadioListTile<Quality>(
-                  value: q,
-                  title: Text(q.label),
-                  activeColor: scheme.primary,
-                ),
-            ],
+            child: Text(
+              '音质档位（脚本支持时生效）',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
           ),
-        ),
-        const SizedBox(height: 8),
-      ]),
+          RadioGroup<Quality>(
+            groupValue: settings.quality,
+            onChanged: (v) {
+              if (v != null) ref.read(appSettingsProvider).setQuality(v);
+            },
+            child: Column(
+              children: [
+                for (final q in Quality.values)
+                  RadioListTile<Quality>(
+                    value: q,
+                    title: Text(q.label),
+                    activeColor: scheme.primary,
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
     );
   }
 }
@@ -72,61 +81,71 @@ class _SleepSheet extends ConsumerWidget {
     return SafeArea(
       child: ListenableBuilder(
         listenable: timer,
-        builder: (context, _) => Column(mainAxisSize: MainAxisSize.min, children: [
-          Padding(
-              padding: const EdgeInsets.all(14),
-              child: Text('定时关闭',
-                  style: Theme.of(context).textTheme.titleMedium)),
-          if (timer.endsAt != null)
+        builder: (context, _) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(14),
               child: Text(
+                '定时关闭',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            if (timer.endsAt != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
                   '剩余 ${timer.remaining.inMinutes} 分 ${timer.remaining.inSeconds.remainder(60)} 秒',
-                  style: TextStyle(color: scheme.primary, fontSize: 15)),
-            ),
-          if (timer.endOfTrackActive)
-            const Padding(
-              padding: EdgeInsets.only(bottom: 8),
-              child: Text('播完当前歌曲后暂停'),
-            ),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            alignment: WrapAlignment.center,
-            children: [
-              for (final m in _presets)
-                FilledButton.tonal(
-                  onPressed: () {
-                    ref
-                        .read(sleepTimerProvider)
-                        .startCountdown(Duration(minutes: m));
-                  },
-                  child: Text('$m 分钟'),
+                  style: TextStyle(color: scheme.primary, fontSize: 15),
                 ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            OutlinedButton.icon(
-              onPressed: () {
-                ref.read(sleepTimerProvider).startEndOfTrack();
-                if (context.mounted) Navigator.of(context).pop();
-              },
-              icon: const Icon(Icons.skip_next),
-              label: const Text('播完当前首'),
+              ),
+            if (timer.endOfTrackActive)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('播完当前歌曲后暂停'),
+              ),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              alignment: WrapAlignment.center,
+              children: [
+                for (final m in _presets)
+                  FilledButton.tonal(
+                    onPressed: () {
+                      ref
+                          .read(sleepTimerProvider)
+                          .startCountdown(Duration(minutes: m));
+                    },
+                    child: Text('$m 分钟'),
+                  ),
+              ],
             ),
-            const SizedBox(width: 12),
-            OutlinedButton.icon(
-              onPressed: () {
-                ref.read(sleepTimerProvider).cancel();
-                if (context.mounted) Navigator.of(context).pop();
-              },
-              icon: const Icon(Icons.cancel_outlined),
-              label: const Text('取消定时'),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () {
+                    ref.read(sleepTimerProvider).startEndOfTrack();
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                  icon: const Icon(Icons.skip_next),
+                  label: const Text('播完当前首'),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    ref.read(sleepTimerProvider).cancel();
+                    if (context.mounted) Navigator.of(context).pop();
+                  },
+                  icon: const Icon(Icons.cancel_outlined),
+                  label: const Text('取消定时'),
+                ),
+              ],
             ),
-          ]),
-          const SizedBox(height: 18),
-        ]),
+            const SizedBox(height: 18),
+          ],
+        ),
       ),
     );
   }
@@ -180,9 +199,9 @@ class _EqSheetState extends ConsumerState<_EqSheet> {
   }
 
   Future<void> _push() async {
-    await ref.read(engineProvider).setEqualizer(
-          _localEnabled ? List<double>.from(_localGains) : null,
-        );
+    await ref
+        .read(engineProvider)
+        .setEqualizer(_localEnabled ? List<double>.from(_localGains) : null);
   }
 
   Future<void> _persist() async {
@@ -197,85 +216,100 @@ class _EqSheetState extends ConsumerState<_EqSheet> {
     return SafeArea(
       child: SizedBox(
         height: MediaQuery.of(context).size.height * 0.62,
-        child: Column(children: [
-          SwitchListTile(
-            title: const Text('均衡器'),
-            subtitle: const Text('基于 mpv 10 段 peaking EQ'),
-            value: _localEnabled,
-            onChanged: (v) {
-              setState(() => _localEnabled = v);
-              _push();
-              _persist();
-            },
-          ),
-          if (!_localEnabled)
-            Expanded(
-              child: Center(
-                child: Text('开启后可调节',
-                    style: TextStyle(color: scheme.onSurfaceVariant)),
-              ),
-            )
-          else ...[
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                for (final p in eqPresets)
-                  FilledButton.tonal(
-                    style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 12)),
-                    onPressed: () {
-                      setState(() {
-                        _localGains = [...p.gains];
-                      });
-                      _push();
-                      _persist();
-                    },
-                    child: Text(p.name, style: const TextStyle(fontSize: 13)),
-                  ),
-              ],
+        child: Column(
+          children: [
+            SwitchListTile(
+              title: const Text('均衡器'),
+              subtitle: const Text('基于 mpv 10 段 peaking EQ'),
+              value: _localEnabled,
+              onChanged: (v) {
+                setState(() => _localEnabled = v);
+                _push();
+                _persist();
+              },
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                child: Row(
-                  children: [
-                    for (var i = 0; i < _localGains.length; i++)
-                      Expanded(
-                        child: Column(children: [
-                          Expanded(
-                            child: RotatedBox(
-                              quarterTurns: -1,
-                              child: Slider(
-                                value: _localGains[i],
-                                min: AppSettings.eqMinDb,
-                                max: AppSettings.eqMaxDb,
-                                onChanged: (v) =>
-                                    setState(() => _localGains[i] = v),
-                                onChangeEnd: (v) {
-                                  _localGains[i] = v;
-                                  _push();
-                                  _persist();
-                                },
-                              ),
-                            ),
-                          ),
-                          Text('${AppSettings.eqBandHz[i] >= 1000 ? '${AppSettings.eqBandHz[i] ~/ 1000}k' : AppSettings.eqBandHz[i]}',
-                              style: const TextStyle(fontSize: 10)),
-                          Text('${_localGains[i].round()}dB',
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  color: scheme.onSurfaceVariant)),
-                        ]),
+            if (!_localEnabled)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    '开启后可调节',
+                    style: TextStyle(color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              )
+            else ...[
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  for (final p in eqPresets)
+                    FilledButton.tonal(
+                      style: FilledButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
                       ),
-                  ],
+                      onPressed: () {
+                        setState(() {
+                          _localGains = [...p.gains];
+                        });
+                        _push();
+                        _persist();
+                      },
+                      child: Text(p.name, style: const TextStyle(fontSize: 13)),
+                    ),
+                ],
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      for (var i = 0; i < _localGains.length; i++)
+                        Expanded(
+                          child: Column(
+                            children: [
+                              Expanded(
+                                child: RotatedBox(
+                                  quarterTurns: -1,
+                                  child: Slider(
+                                    value: _localGains[i],
+                                    min: AppSettings.eqMinDb,
+                                    max: AppSettings.eqMaxDb,
+                                    onChanged: (v) =>
+                                        setState(() => _localGains[i] = v),
+                                    onChangeEnd: (v) {
+                                      _localGains[i] = v;
+                                      _push();
+                                      _persist();
+                                    },
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '${AppSettings.eqBandHz[i] >= 1000 ? '${AppSettings.eqBandHz[i] ~/ 1000}k' : AppSettings.eqBandHz[i]}',
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                              Text(
+                                '${_localGains[i].round()}dB',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
+            ],
+            const SizedBox(height: 10),
           ],
-          const SizedBox(height: 10),
-        ]),
+        ),
       ),
     );
   }
@@ -290,12 +324,27 @@ Future<void> showQueueSheet(BuildContext context) {
   );
 }
 
-class _QueueSheet extends ConsumerWidget {
+class _QueueSheet extends ConsumerStatefulWidget {
   const _QueueSheet();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_QueueSheet> createState() => _QueueSheetState();
+}
+
+class _QueueSheetState extends ConsumerState<_QueueSheet>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tabs = TabController(length: 2, vsync: this);
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final core = ref.watch(playerCoreProvider);
+    final history = ref.watch(playHistoryProvider);
     final scheme = Theme.of(context).colorScheme;
     return ValueListenableBuilder<PlayerUiState>(
       valueListenable: core.state,
@@ -305,175 +354,334 @@ class _QueueSheet extends ConsumerWidget {
         return SafeArea(
           child: SizedBox(
             height: MediaQuery.of(context).size.height * 0.66,
-            child: Column(children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 8, 6),
-                child: Row(children: [
-                  Text('播放队列',
-                      style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(width: 8),
-                  // 当前是第几首 / 共几首（参考栖弦显示位置）
-                  if (queue.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: scheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(10),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TabBar(
+                          controller: _tabs,
+                          isScrollable: true,
+                          tabAlignment: TabAlignment.start,
+                          labelStyle: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          unselectedLabelStyle: const TextStyle(fontSize: 14),
+                          tabs: [
+                            Tab(
+                              text:
+                                  '当前列表${queue.isEmpty ? '' : ' (${queue.length})'}',
+                            ),
+                            Tab(
+                              text:
+                                  '最近播放${history.items.isEmpty ? '' : ' (${history.items.length})'}',
+                            ),
+                          ],
+                        ),
                       ),
-                      child: Text(
-                        '${currentIndex + 1}/${queue.length}',
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: scheme.onPrimaryContainer),
+                      // 清空只作用于「当前列表」；最近播放用滑动逐条删除，
+                      // 不提供一键清空（历史更有保留价值，误清代价高）。
+                      AnimatedBuilder(
+                        animation: _tabs,
+                        builder: (context, _) => _tabs.index == 0
+                            ? IconButton(
+                                tooltip: '清空队列',
+                                // 清空是**不可逆**的：队列里可能有上百首，误触就全丢。
+                                // 与歌单删除保持一致，走二次确认。
+                                onPressed: queue.isEmpty
+                                    ? null
+                                    : () async {
+                                        final ok = await showDialog<bool>(
+                                          context: context,
+                                          builder: (dctx) => AlertDialog(
+                                            title: const Text('清空播放队列？'),
+                                            content: Text(
+                                              '将移除全部 ${queue.length} 首，'
+                                              '当前播放随之停止。此操作不可撤销。',
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.of(dctx)
+                                                        .pop(false),
+                                                child: const Text('取消'),
+                                              ),
+                                              FilledButton(
+                                                style: FilledButton.styleFrom(
+                                                  backgroundColor: Theme.of(
+                                                    dctx,
+                                                  ).colorScheme.error,
+                                                  foregroundColor: Theme.of(
+                                                    dctx,
+                                                  ).colorScheme.onError,
+                                                ),
+                                                onPressed: () =>
+                                                    Navigator.of(dctx)
+                                                        .pop(true),
+                                                child: const Text('清空'),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                        if (ok != true) return;
+                                        for (
+                                          var i = queue.length - 1;
+                                          i >= 0;
+                                          i--
+                                        ) {
+                                          await core.removeAt(i);
+                                        }
+                                      },
+                                icon: const Icon(
+                                  Icons.delete_sweep_outlined,
+                                  size: 20,
+                                ),
+                              )
+                            : const SizedBox.shrink(),
                       ),
-                    ),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: '清空',
-                    // 清空是**不可逆**的：队列里可能有上百首，误触就全丢。
-                    // 与歌单删除保持一致，走二次确认。
-                    onPressed: queue.isEmpty
-                        ? null
-                        : () async {
-                            final ok = await showDialog<bool>(
-                              context: context,
-                              builder: (dctx) => AlertDialog(
-                                title: const Text('清空播放队列？'),
-                                content: Text('将移除全部 ${queue.length} 首，'
-                                    '当前播放随之停止。此操作不可撤销。'),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () =>
-                                        Navigator.of(dctx).pop(false),
-                                    child: const Text('取消'),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabs,
+                    children: [
+                      // —— Tab 1：当前播放列表 ——
+                      queue.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.queue_music,
+                                    size: 36,
+                                    color: scheme.onSurfaceVariant,
                                   ),
-                                  FilledButton(
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor:
-                                          Theme.of(dctx).colorScheme.error,
-                                      foregroundColor:
-                                          Theme.of(dctx).colorScheme.onError,
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    '队列为空',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: scheme.onSurfaceVariant,
                                     ),
-                                    onPressed: () =>
-                                        Navigator.of(dctx).pop(true),
-                                    child: const Text('清空'),
                                   ),
                                 ],
                               ),
-                            );
-                            if (ok != true) return;
-                            for (var i = queue.length - 1; i >= 0; i--) {
-                              await core.removeAt(i);
-                            }
-                          },
-                    icon: const Icon(Icons.delete_sweep_outlined, size: 20),
-                  ),
-                ]),
-              ),
-              const Divider(height: 1),
-              Expanded(
-                child: queue.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.queue_music,
-                                size: 36, color: scheme.onSurfaceVariant),
-                            const SizedBox(height: 8),
-                            Text('队列为空',
-                                style: TextStyle(
-                                    fontSize: 13,
-                                    color: scheme.onSurfaceVariant)),
-                          ],
-                        ),
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        itemCount: queue.length,
-                        itemBuilder: (context, i) {
-                          final it = queue[i];
-                          final active = i == currentIndex;
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              itemCount: queue.length,
+                              itemBuilder: (context, i) {
+                                final it = queue[i];
+                                final active = i == currentIndex;
 
-                          // 当前曲：独立高亮卡片 + 播放中动画条
-                          // （参考栖弦：当前曲不从列表里平铺，做成卡片强调）
-                          if (active) {
-                            return Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: scheme.primaryContainer
-                                      .withValues(alpha: 0.55),
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: ListTile(
-                                  leading: _PlayingBars(
-                                      playing: s.playing,
-                                      color: scheme.primary),
-                                  title: Text(it.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: scheme.onPrimaryContainer)),
-                                  subtitle: Text(it.artist,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                          fontSize: 12,
-                                          color: scheme.onPrimaryContainer
-                                              .withValues(alpha: 0.75))),
-                                  trailing: IconButton(
-                                    tooltip: '从队列移除',
-                                    onPressed: () => core.removeAt(i),
-                                    icon: Icon(Icons.close,
-                                        size: 18,
-                                        color: scheme.onPrimaryContainer),
+                                // 当前曲：独立高亮卡片 + 播放中动画条
+                                // （参考栖弦：当前曲不从列表里平铺，做成卡片强调）
+                                if (active) {
+                                  return Padding(
+                                    padding: const EdgeInsets.fromLTRB(
+                                      12,
+                                      8,
+                                      12,
+                                      4,
+                                    ),
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: scheme.primaryContainer
+                                            .withValues(alpha: 0.55),
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: ListTile(
+                                        leading: _PlayingBars(
+                                          playing: s.playing,
+                                          color: scheme.primary,
+                                        ),
+                                        title: Text(
+                                          it.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: scheme.onPrimaryContainer,
+                                          ),
+                                        ),
+                                        subtitle: Text(
+                                          it.artist,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: scheme.onPrimaryContainer
+                                                .withValues(alpha: 0.75),
+                                          ),
+                                        ),
+                                        trailing: IconButton(
+                                          tooltip: '从队列移除',
+                                          onPressed: () => core.removeAt(i),
+                                          icon: Icon(
+                                            Icons.close,
+                                            size: 18,
+                                            color: scheme.onPrimaryContainer,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+
+                                // 其他曲：常规行，左滑删除
+                                return Dismissible(
+                                  key: ValueKey(
+                                    'queue_${it.sourceId}_${it.musicId}_$i',
                                   ),
-                                ),
-                              ),
-                            );
-                          }
-
-                          // 其他曲：常规行，左滑删除
-                          return Dismissible(
-                            key:
-                                ValueKey('queue_${it.sourceId}_${it.musicId}_$i'),
-                            direction: DismissDirection.endToStart,
-                            background: Container(
-                              color: scheme.errorContainer,
-                              alignment: Alignment.centerRight,
-                              padding: const EdgeInsets.only(right: 20),
-                              child: Icon(Icons.delete_outline,
-                                  color: scheme.onErrorContainer),
+                                  direction: DismissDirection.endToStart,
+                                  background: Container(
+                                    color: scheme.errorContainer,
+                                    alignment: Alignment.centerRight,
+                                    padding: const EdgeInsets.only(right: 20),
+                                    child: Icon(
+                                      Icons.delete_outline,
+                                      color: scheme.onErrorContainer,
+                                    ),
+                                  ),
+                                  onDismissed: (_) => core.removeAt(i),
+                                  child: ListTile(
+                                    dense: true,
+                                    leading: SizedBox(
+                                      width: 24,
+                                      child: Text(
+                                        '${i + 1}',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ),
+                                    title: Text(
+                                      it.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: Text(
+                                      it.artist,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                    onTap: () => core.playAt(i),
+                                  ),
+                                );
+                              },
                             ),
-                            onDismissed: (_) => core.removeAt(i),
-                            child: ListTile(
-                              dense: true,
-                              leading: SizedBox(
-                                width: 24,
-                                child: Text('${i + 1}',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: scheme.onSurfaceVariant)),
-                              ),
-                              title: Text(it.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                              subtitle: Text(it.artist,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12)),
-                              onTap: () => core.playAt(i),
-                            ),
-                          );
-                        },
+                      // —— Tab 2：最近播放（播放历史）——
+                      _RecentList(
+                        onPlay: (h) => _playFromHistory(h),
+                        onRemove: (h) => ref
+                            .read(playHistoryProvider)
+                            .remove(h.sourceId, h.musicId),
                       ),
-              ),
-            ]),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 从历史里点选一首：把它**连同其前后的历史**作为新队列播放。
+  ///
+  /// 为什么不只播单曲：历史列表本身就是一串歌，用户点中间某首时
+  /// 期望「从这里继续听」，单曲队列会让"下一首"直接没了。
+  void _playFromHistory(HistoryItem h) {
+    final items = ref.read(playHistoryProvider).items;
+    final idx = items.indexWhere((e) => e.key == h.key);
+    final core = ref.read(playerCoreProvider);
+    core.setQueue([
+      for (final e in items)
+        PlayerItem(
+          title: e.title,
+          artist: e.artist,
+          sourceId: e.sourceId,
+          musicId: e.musicId,
+          album: e.album,
+          duration: e.durationMs == null
+              ? null
+              : Duration(milliseconds: e.durationMs!),
+          artUri: (e.picUrl == null || e.picUrl!.isEmpty)
+              ? null
+              : Uri.tryParse(e.picUrl!),
+        ),
+    ], index: idx < 0 ? 0 : idx);
+    Navigator.of(context).maybePop();
+  }
+}
+
+/// 「最近播放」列表：直接复用播放历史数据。
+class _RecentList extends ConsumerWidget {
+  const _RecentList({required this.onPlay, required this.onRemove});
+  final void Function(HistoryItem) onPlay;
+  final void Function(HistoryItem) onRemove;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final history = ref.watch(playHistoryProvider).items;
+    final scheme = Theme.of(context).colorScheme;
+    if (history.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.history, size: 36, color: scheme.onSurfaceVariant),
+            const SizedBox(height: 8),
+            Text(
+              '还没有播放记录',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.only(bottom: 8),
+      itemCount: history.length,
+      itemBuilder: (context, i) {
+        final h = history[i];
+        return Dismissible(
+          key: ValueKey('hist_${h.sourceId}_${h.musicId}'),
+          direction: DismissDirection.endToStart,
+          background: Container(
+            color: scheme.errorContainer,
+            alignment: Alignment.centerRight,
+            padding: const EdgeInsets.only(right: 20),
+            child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
+          ),
+          onDismissed: (_) => onRemove(h),
+          child: ListTile(
+            dense: true,
+            leading: CoverImage(url: h.picUrl, size: 40, radius: 6),
+            title: Text(h.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+            subtitle: Text(
+              h.artist,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 12),
+            ),
+            // 显式删除按钮：滑动删除是隐藏手势，很多人不知道。
+            // 与「当前列表」里当前曲目的关闭按钮保持一致（同为 18px）。
+            trailing: IconButton(
+              tooltip: '从历史中移除',
+              onPressed: () => onRemove(h),
+              icon: Icon(Icons.close, size: 18, color: scheme.onSurfaceVariant),
+            ),
+            onTap: () => onPlay(h),
           ),
         );
       },
@@ -540,12 +748,14 @@ class _PlayingBarsState extends State<_PlayingBars>
                   padding: const EdgeInsets.symmetric(horizontal: 1.4),
                   child: Container(
                     width: 3,
-                    height: 4 +
+                    height:
+                        4 +
                         14 *
                             (0.5 +
                                 0.5 *
                                     math.sin(
-                                        (_c.value + delays[i]) * math.pi * 2)),
+                                      (_c.value + delays[i]) * math.pi * 2,
+                                    )),
                     decoration: BoxDecoration(
                       color: widget.color,
                       borderRadius: BorderRadius.circular(2),
@@ -571,7 +781,17 @@ Future<void> showSpeedSheet(BuildContext context) {
 class _SpeedSheet extends ConsumerWidget {
   const _SpeedSheet();
 
-  static const _rates = <double>[0.5, 0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+  static const _rates = <double>[
+    0.5,
+    0.75,
+    0.9,
+    1.0,
+    1.1,
+    1.25,
+    1.5,
+    1.75,
+    2.0,
+  ];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -581,30 +801,35 @@ class _SpeedSheet extends ConsumerWidget {
       valueListenable: core.state,
       builder: (context, s, _) {
         return SafeArea(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Padding(
-              padding: const EdgeInsets.all(14),
-              child: Text('播放速度',
-                  style: Theme.of(context).textTheme.titleMedium),
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final r in _rates)
-                  ChoiceChip(
-                    label: Text('${r}x'),
-                    selected: (s.speed - r).abs() < 0.001,
-                    selectedColor: scheme.primaryContainer,
-                    onSelected: (_) {
-                      core.setSpeed(r);
-                      Navigator.of(context).maybePop();
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ]),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  '播放速度',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final r in _rates)
+                    ChoiceChip(
+                      label: Text('${r}x'),
+                      selected: (s.speed - r).abs() < 0.001,
+                      selectedColor: scheme.primaryContainer,
+                      onSelected: (_) {
+                        core.setSpeed(r);
+                        Navigator.of(context).maybePop();
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
         );
       },
     );
