@@ -143,21 +143,35 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     icon: Icon(Icons.queue_music,
                         color: scheme.onSurfaceVariant),
                   ),
-                  // 倍速：非 1x 时高亮（一眼看出当前是变速播放）
+                  // 倍速：非 1x 时高亮（一眼看出当前是变速播放）。
+                  //
+                  // 点击区必须撑到 48dp：原来只有 61x33，夹在两个 48dp 的
+                  // IconButton 中间，实测很难点中（Material 最小触控标准
+                  // 是 48x48）。用 minWidth/minHeight 保证，而不是加大
+                  // padding——后者会让文字周围留白过多、和图标不对齐。
                   InkWell(
                     onTap: () => showSpeedSheet(context),
                     borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 8),
-                      child: Text(
-                        s.speed == 1.0 ? '1.0x' : '${_fmtRate(s.speed)}x',
-                        style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: s.speed == 1.0
-                                ? scheme.onSurfaceVariant
-                                : scheme.primary),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        minWidth: 48,
+                        minHeight: 48,
+                      ),
+                      child: Center(
+                        widthFactor: 1,
+                        heightFactor: 1,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: Text(
+                            s.speed == 1.0 ? '1.0x' : '${_fmtRate(s.speed)}x',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: s.speed == 1.0
+                                    ? scheme.onSurfaceVariant
+                                    : scheme.primary),
+                          ),
+                        ),
                       ),
                     ),
                   ),

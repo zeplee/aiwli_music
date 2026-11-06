@@ -259,6 +259,13 @@ class _SearchPageState extends ConsumerState<SearchPage>
       artist: m.artist,
       sourceId: m.sourceId,
       musicId: m.musicId,
+      // 时长/封面必须带上：下载落盘要靠它们写 ID3 标签，
+      // 漏了会出现"下载完成但库里显示 00:00 / 无封面"。
+      duration: m.duration,
+      album: m.album?.name,
+      artUri: (m.album?.picUrl == null || m.album!.picUrl!.isEmpty)
+          ? null
+          : Uri.tryParse(m.album!.picUrl!),
       raw: m.raw,
     ));
     messenger.showSnackBar(SnackBar(

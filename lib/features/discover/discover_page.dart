@@ -309,8 +309,10 @@ class _SourceSelector extends ConsumerWidget {
         .toList();
     if (installed.length < 2) return const SizedBox.shrink();
 
+    // 高度必须 >= 48：胶囊自身内边距让它只有 31dp 高，
+    // 外层若再限制在 42，可点区就更小（实测难命中）。
     return SizedBox(
-      height: 42,
+      height: 48,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -364,8 +366,10 @@ class _BuiltinBoardRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final ids = BuiltinBoards.catalog.keys.toList();
+    // 同音源胶囊：容器高度要给足，否则胶囊自身 29dp 的可点区
+    // 会被 40 的容器进一步压缩（实测点击经常落空）。
     return SizedBox(
-      height: 40,
+      height: 48,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),

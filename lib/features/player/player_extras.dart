@@ -332,9 +332,38 @@ class _QueueSheet extends ConsumerWidget {
                   const Spacer(),
                   IconButton(
                     tooltip: '清空',
+                    // 清空是**不可逆**的：队列里可能有上百首，误触就全丢。
+                    // 与歌单删除保持一致，走二次确认。
                     onPressed: queue.isEmpty
                         ? null
                         : () async {
+                            final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (dctx) => AlertDialog(
+                                title: const Text('清空播放队列？'),
+                                content: Text('将移除全部 ${queue.length} 首，'
+                                    '当前播放随之停止。此操作不可撤销。'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(dctx).pop(false),
+                                    child: const Text('取消'),
+                                  ),
+                                  FilledButton(
+                                    style: FilledButton.styleFrom(
+                                      backgroundColor:
+                                          Theme.of(dctx).colorScheme.error,
+                                      foregroundColor:
+                                          Theme.of(dctx).colorScheme.onError,
+                                    ),
+                                    onPressed: () =>
+                                        Navigator.of(dctx).pop(true),
+                                    child: const Text('清空'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (ok != true) return;
                             for (var i = queue.length - 1; i >= 0; i--) {
                               await core.removeAt(i);
                             }

@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aiwli_music/sources/builtin/kg_sdk.dart';

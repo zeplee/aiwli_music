@@ -130,6 +130,13 @@ class _BoardSongsPageState extends ConsumerState<BoardSongsPage> {
                                 artist: m.artist,
                                 sourceId: m.sourceId,
                                 musicId: m.musicId,
+                                // 同搜索页：缺这两个字段会丢标签信息
+                                duration: m.duration,
+                                album: m.album?.name,
+                                artUri: (m.album?.picUrl == null ||
+                                        m.album!.picUrl!.isEmpty)
+                                    ? null
+                                    : Uri.tryParse(m.album!.picUrl!),
                                 raw: m.raw,
                               )));
                           messenger.showSnackBar(SnackBar(
