@@ -259,15 +259,82 @@ class PlayerCore {
     );
   }
 
+  /// 判断一个引擎事件是否属于「已经切走的那首歌」。
+  ///
+  /// 为什么不能只看 currentSource：
+  ///   `_source` 在 load() 里是**同步赋值**的（media_kit_engine.dart:124），
+  ///   切到新曲后它立刻变成新曲 URL；而 `_activeResolved` 也在 resolve
+  ///   成功后赋成新曲。两者相等 → 旧条件永远不成立 → 守卫形同虚设。
+  ///   实测（player_cast_e2e_test 的 PROBE）证实：切歌后旧曲的 error
+  ///   仍会触发一次多余的重新取链。
+  ///
+  /// 因此额外用**错误文本里的 URL** 做归属判断：
+  ///   mpv 报的是 `Failed to open <该次 load 的地址>`，即使这条消息
+  ///   在新曲 load 之后才到达，URL 仍然指向旧曲——这才是可靠的归属依据。
+  bool _isStaleEvent(EngineSnapshot snap) {
+    final active = _activeResolved;
+    if (active == null) return false;
+    final activeUrl = active.url;
+
+    // ① 只有「错误事件」才按错误文本归属判断。
+    //
+    //    血的教训：EngineSnapshot 的 error 是**粘性**的
+    //    （media_kit_engine._emit 里 `error ?? _snapshot.error`），
+    //    播放恢复后若没有显式 clearError，上一次失败的文案会一直挂着。
+    //    早期没加这个 processing 判断，导致 loading/ready 事件也被
+    //    按残留的旧错误文本判成"陈旧"而丢弃 —— 真机上表现为
+    //    同一个 URL（same=true）仍进丢弃分支，播放进度不更新。
+    if (snap.processing == EngineProcessing.error) {
+      final err = snap.error?.toString();
+      if (err != null) {
+        final m = _failedUrlPattern.firstMatch(err);
+        if (m != null) {
+          final bad = m.group(1);
+          if (bad != null && !_sameResource(bad, activeUrl)) return true;
+        }
+      }
+    }
+
+    // ② 引擎已经切到别的地址（正常换源过程中会短暂不一致，但那时
+    //    _activeResolved 也会同步更新，所以此处仍按不等判定）
+    final cur = _engine.currentSource;
+    if (cur != null && !_sameResource(cur.toString(), activeUrl)) return true;
+
+    return false;
+  }
+
+  /// mpv 的错误格式：`Failed to open <url>`
+  ///
+  /// 注意 URL 本身可能含 `$`、`?`、`&`、`=` 等字符（酷我直链就带 `$`），
+  /// 不能只按 `\S+` 截断再用"全等"比对——否则同一个地址会被判成不同，
+  /// 导致**当前曲目的正常事件被误丢弃**（真机已复现：cur 与 active
+  /// 字符串完全相同却仍进了丢弃分支）。
+  static final _failedUrlPattern = RegExp(r'Failed to open\s+(\S+)');
+
+  /// 宽松比对两个地址是否指向同一资源。
+  /// 只比 scheme + host + path，忽略 query（签名/时间戳每次都可能不同）。
+  bool _sameResource(String a, String b) {
+    if (a == b) return true;
+    try {
+      final ua = Uri.parse(a);
+      final ub = Uri.parse(b);
+      return ua.scheme == ub.scheme &&
+          ua.host == ub.host &&
+          ua.path == ub.path;
+    } catch (_) {
+      return false;
+    }
+  }
+
   void _onEngineSnapshot(EngineSnapshot snap) {
     // 陈旧事件守卫：快速切歌时，旧歌的 mpv 异步错误/完成事件会在
     // 新歌 load 之后到达。音频已属于新歌，把这些事件直接丢弃，
     // 否则页面显示（错误文案/进度条/自动下一首）被旧歌污染——
     // 即"播放的音频和显示的页面不是同一首"。
-    final cur = _engine.currentSource;
-    if (cur != null &&
-        _activeResolved != null &&
-        cur != Uri.parse(_activeResolved!.url)) {
+    if (_isStaleEvent(snap)) {
+      AppLog.d('Stale',
+          '丢弃陈旧事件 processing=${snap.processing} '
+          'cur=${_engine.currentSource} active=${_activeResolved?.url}');
       return;
     }
     // 引擎异步错误（mpv "Failed to open <死链>"）→ 换源回退。
