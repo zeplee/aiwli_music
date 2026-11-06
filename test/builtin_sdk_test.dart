@@ -1,3 +1,6 @@
+@Tags(['network'])
+library;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aiwli_music/sources/builtin/kw_sdk.dart';
@@ -5,6 +8,9 @@ import 'package:aiwli_music/sources/builtin/tx_sdk.dart';
 import 'package:aiwli_music/sources/builtin/wy_sdk.dart';
 
 /// 内置搜索 SDK 联通性实测（真实网络）。
+///
+/// 默认跳过（见 dart_test.yaml），需要实测时：
+///   flutter test --tags network test/builtin_sdk_test.dart
 void main() {
   const kw = '周杰伦';
 

@@ -30,6 +30,12 @@ class AppSettings extends SafeNotifier {
   /// 歌词对齐：true = 左对齐（参考栖弦 TextAlign.start），false = 居中。
   bool lyricAlignStart = false;
 
+  /// 主题模式：system = 跟随系统，light = 白天，dark = 夜间。
+  ///
+  /// 默认 system：现代系统自带日落后切换，跟着走最省心；
+  /// 用户想固定昼夜时在设置里改。
+  String themeMode = 'system';
+
   /// 该档位对应的主歌词字号。
   double get lyricFontSize => switch (lyricSizeLevel) {
         1 => 15,
@@ -54,6 +60,8 @@ class AppSettings extends SafeNotifier {
     lyricRoman = m['lyricRoman'] != false;
     lyricSizeLevel = (m['lyricSizeLevel'] as num?)?.toInt() ?? 2;
     lyricAlignStart = m['lyricAlignStart'] == true;
+    final tm = m['themeMode']?.toString();
+    if (tm == 'system' || tm == 'light' || tm == 'dark') themeMode = tm!;
     final dirs = m['localMusicDirs'] as List?;
     if (dirs != null) {
       localMusicDirs = dirs.whereType<String>().toList();
@@ -76,11 +84,20 @@ class AppSettings extends SafeNotifier {
         'lyricRoman': lyricRoman,
         'lyricSizeLevel': lyricSizeLevel,
         'lyricAlignStart': lyricAlignStart,
+        'themeMode': themeMode,
         'localMusicDirs': localMusicDirs,
         'sleepTimerMinutes': sleepTimerMinutes,
         'songSort': songSort,
         'songSortAscending': songSortAscending,
       });
+
+  /// 设置主题模式（system / light / dark），立即生效并落盘。
+  Future<void> setThemeMode(String mode) async {
+    if (mode != 'system' && mode != 'light' && mode != 'dark') return;
+    themeMode = mode;
+    notifyListeners();
+    await _flush();
+  }
 
   Future<void> setLyricPrefs(
       {bool? translation, bool? roman, int? sizeLevel, bool? alignStart}) async {

@@ -84,6 +84,21 @@ class MinePage extends ConsumerWidget {
               builder: (_) => const LibraryPage())),
         ),
         ListTile(
+          leading: Icon(ref.watch(appSettingsProvider).themeMode == 'dark'
+              ? Icons.dark_mode_outlined
+              : ref.watch(appSettingsProvider).themeMode == 'light'
+                  ? Icons.light_mode_outlined
+                  : Icons.brightness_auto_outlined),
+          title: const Text('外观'),
+          subtitle: Text(switch (ref.watch(appSettingsProvider).themeMode) {
+            'dark' => '夜间模式',
+            'light' => '白天模式',
+            _ => '跟随系统',
+          }),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _pickThemeMode(context, ref),
+        ),
+        ListTile(
           leading: const Icon(Icons.cloud_sync_outlined),
           title: const Text('WebDAV 同步'),
           subtitle: Text(webdav.config.isConfigured
@@ -111,6 +126,50 @@ class MinePage extends ConsumerWidget {
         const SizedBox(height: 24),
       ]),
     );
+  }
+
+  /// 外观选择：跟随系统 / 白天 / 夜间。
+  ///
+  /// 用底部弹窗而不是下拉：手机上更符合 Material 的「选项不多时用
+  /// 模态列表」惯例，点一下即生效，不需要再点确认。
+  static Future<void> _pickThemeMode(BuildContext context, WidgetRef ref) async {
+    final current = ref.read(appSettingsProvider).themeMode;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('外观',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            for (final (mode, label, icon) in const [
+              ('system', '跟随系统', Icons.brightness_auto_outlined),
+              ('light', '白天模式', Icons.light_mode_outlined),
+              ('dark', '夜间模式', Icons.dark_mode_outlined),
+            ])
+              ListTile(
+                leading: Icon(icon),
+                title: Text(label),
+                trailing: current == mode
+                    ? Icon(Icons.check,
+                        color: Theme.of(ctx).colorScheme.primary)
+                    : null,
+                onTap: () => Navigator.of(ctx).pop(mode),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return;
+    await ref.read(appSettingsProvider).setThemeMode(picked);
   }
 
   static String tasksSubtitle(WidgetRef ref) {

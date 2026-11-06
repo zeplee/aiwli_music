@@ -1,8 +1,13 @@
+@Tags(['network'])
+library;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aiwli_music/sources/builtin/builtin_search.dart';
 
 /// 验证分页：首屏 30 条 → loadMore → 第 2 页能追加。
+///
+/// 真实网络测试（打酷我接口），默认跳过：flutter test --tags network
 void main() {
   test('酷我分页：第 1 页 → 加载第 2 页', () async {
     final groups = await BuiltinSearch.searchAll(
@@ -10,23 +15,18 @@ void main() {
       enabled: {'kw'},
     );
     final g = groups.first;
-    // ignore: avoid_print
-    print('第1页: ${g.count} 条, hasMore=${g.hasMore}, page=${g.page}');
-    expect(g.count, greaterThan(0));
-    expect(g.hasMore, isTrue, reason: '满 30 条应判定还有下一页');
 
-    final firstTitles = g.songs.take(3).map((s) => s.title).toList();
-    final added = await BuiltinSearch.loadMore(g);
-    // ignore: avoid_print
-    print('第2页追加: $added 条 → 总计 ${g.count}, page=${g.page}');
-    // ignore: avoid_print
-    print('第2页新歌示例: ${g.songs.skip(firstTitles.length).take(3).map((s) => s.title).toList()}');
+    expect(g.songs.length, 30, reason: '首屏应为 30 条');
+    expect(g.hasMore, isTrue, reason: '应还有更多');
 
-    expect(added, greaterThan(0), reason: 'loadMore 应追加新条目');
-    expect(g.page, 2);
-    expect(g.count, greaterThan(30), reason: '总数应超过一页');
-    expect(firstTitles.isNotEmpty, isTrue);
-  }, timeout: const Timeout(Duration(seconds: 120)));
+    final before = g.songs.length;
+    final more = await BuiltinSearch.loadMore(g);
+    expect(more, 30, reason: '第 2 页应再取 30 条');
+    expect(g.songs.length, before + more);
+    // 第 2 页不能与第 1 页重复
+    final ids = g.songs.map((e) => e.musicId).toSet();
+    expect(ids.length, g.songs.length, reason: '分页不得出现重复条目');
+  }, timeout: const Timeout(Duration(seconds: 60)));
 
   test('无更多时 loadMore 返回 0 且置 hasMore=false', () async {
     final groups = await BuiltinSearch.searchAll(
@@ -34,8 +34,14 @@ void main() {
       enabled: {'kw'},
     );
     final g = groups.first;
-    g.hasMore = false; // 模拟已到底
-    final added = await BuiltinSearch.loadMore(g);
-    expect(added, 0);
-  });
+    // 反复翻页直到到底
+    var guard = 0;
+    while (g.canLoadMore && guard < 20) {
+      await BuiltinSearch.loadMore(g);
+      guard++;
+    }
+    expect(g.hasMore, isFalse);
+    expect(await BuiltinSearch.loadMore(g), 0,
+        reason: '到底后应返回 0 而不是继续请求');
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }

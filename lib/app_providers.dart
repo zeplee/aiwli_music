@@ -111,7 +111,8 @@ final playerCoreProvider = Provider<PlayerCore>((ref) {
     focus: ref.read(focusPolicyProvider),
     urlResolver: (item, exclude) => resolveUrl(ref, item, exclude),
     onSourceUnplayable: (resolved, error) {
-      resolver.reportUnplayable(resolved.winnerId, error: error);
+      resolver.reportUnplayable(resolved.winnerId,
+          platformId: resolved.winnerPlatform, error: error);
       // 该源名下缓存可能都是死链，一并作废
       resolver.invalidateCacheAll(resolved.winnerId);
       // 记录失败（被动学习，供源管理页展示健康度）

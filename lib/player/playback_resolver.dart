@@ -17,6 +17,7 @@ class ResolvedPlayback {
     required this.title,
     required this.artist,
     required this.winnerId,
+    this.winnerPlatform,
     this.toggled = false,
   });
 
@@ -26,8 +27,17 @@ class ResolvedPlayback {
   final String sourceId;
 
   /// 实际取链胜出的脚本实例 id（内置平台由某脚本代取时与 sourceId 不同）。
-  /// 播放器 load 失败时按它拉黑，而不是按平台名——否则排除不生效。
+  ///
+  /// 播放器 load 失败时拉黑用的是 **(winnerId, 平台)** 二元组：
+  /// 只按脚本拉黑会连带判死该脚本的其他平台；
+  /// 只按平台拉黑会连带判死其他脚本的同一平台。
+  ///
+  /// 注意：缓存命中与换源路径拿不到脚本 id，此时该字段退化为平台 id
+  /// （见 [PlaybackResolver.reportUnplayable] 的退化匹配）。
   final String winnerId;
+
+  /// 胜出时的平台 id（kw/tx/...）。缓存/换源路径为 null。
+  final String? winnerPlatform;
   final String sourceLabel;
   final String musicId;
   final String title;
@@ -80,25 +90,56 @@ class PlaybackResolver {
   /// 记住「哪个源成功取到过链接」，下次同平台优先用它（内存级，会话内有效）。
   final Map<String, String> _preferred = {};
 
-  /// 死源/坏源记忆：URL 取到但播放器打不开（如域名 NXDOMAIN、5xx），
-  /// 30 分钟内不再为任何曲目选它。lx 生态上游随时会死，这是常态。
+  /// 死源/坏源记忆：URL 取到但播放器打不开（如域名 NXDOMAIN、5xx）。
+  ///
+  /// **键必须是 (脚本id, 平台id) 二元组**，不能只用其中一个：
+  ///   · 只用脚本 id → 幻音返回的酷我链接挂了，会连带把网易/QQ 也判死
+  ///   · 只用平台 id → 幻音的酷我挂了，会把其他脚本的酷我也判死
+  /// 两者都会让之后的取链白白跳过可用源。
+  ///
+  /// 历史 bug：这里曾是 `Map<String, DateTime>`，而写入方
+  /// （缓存命中 / 换源路径）传的是平台 id、读取方 `_isDead(lx.id)`
+  /// 传的是脚本 id —— 键混用导致那些记录永远不会被命中，成了死数据。
   final Map<String, DateTime> _deadUntil = {};
   static const _deadPenalty = Duration(minutes: 30);
 
-  bool _isDead(String sourceId) {
-    final t = _deadUntil[sourceId];
-    if (t == null) return false;
-    if (DateTime.now().isAfter(t)) {
-      _deadUntil.remove(sourceId);
-      return false;
+  String _deadKey(String lxId, String platformId) => '$lxId|$platformId';
+
+  /// 是否已判死。任一键为空时退化为单键匹配（缓存/换源路径拿不到脚本 id）。
+  bool _isDead(String lxId, {String? platformId}) {
+    final keys = <String>[
+      if (platformId != null) _deadKey(lxId, platformId),
+      _deadKey(lxId, ''),
+    ];
+    final now = DateTime.now();
+    var dead = false;
+    for (final k in keys) {
+      final t = _deadUntil[k];
+      if (t == null) continue;
+      if (now.isAfter(t)) {
+        _deadUntil.remove(k);
+      } else {
+        dead = true;
+      }
     }
-    return true;
+    return dead;
   }
 
-  /// 播放器报告「这个源的 URL 打不开」。
-  void reportUnplayable(String sourceId, {Object? error}) {
-    _deadUntil[sourceId] = DateTime.now().add(_deadPenalty);
-    AppLog.w('Resolve', '标记坏源 $sourceId（30min 内跳过）: $error');
+  /// 测试可见：判断某 (脚本, 平台) 是否已被判死。
+  bool debugIsDead(String lxId, {String? platformId}) =>
+      _isDead(lxId, platformId: platformId);
+
+  /// 播放器报告「这个源+平台的 URL 打不开」。
+  ///
+  /// [platformId] 与 [lxId] 都可能与调用方拿到的对象不同：
+  /// 缓存/换源路径只有平台 id，此时 lxId 传平台 id、platformId 传 null
+  /// 也能正确记下来（见 [_isDead] 的退化匹配）。
+  void reportUnplayable(String lxId, {String? platformId, Object? error}) {
+    final key = _deadKey(lxId, platformId ?? '');
+    _deadUntil[key] = DateTime.now().add(_deadPenalty);
+    AppLog.w('Resolve',
+        '标记坏源 $lxId${platformId != null ? '/$platformId' : ''}'
+        '（30min 内跳过）: $error');
   }
 
   /// 在途请求去重：同一首歌并发触发（点播+预取+自动下一首）时，
@@ -205,6 +246,7 @@ class PlaybackResolver {
         url: cached,
         sourceId: sourceId,
         winnerId: sourceId,
+        winnerPlatform: sourceId,
         sourceLabel: _label(sourceId),
         musicId: musicId,
         title: title,
@@ -256,6 +298,7 @@ class PlaybackResolver {
           url: r.url,
           sourceId: c.sourceId,
           winnerId: c.sourceId,
+          winnerPlatform: c.sourceId,
           sourceLabel: _label(c.sourceId),
           musicId: c.musicId,
           title: r.title,
@@ -301,7 +344,10 @@ class PlaybackResolver {
     final candidates = <LxSource>[];
     if (isBuiltin) {
       for (final lx in _registry.enabledRuntimes) {
-        if (_isDead(lx.id) || excludeIds.contains(lx.id)) continue;
+        if (_isDead(lx.id, platformId: sourceId) ||
+            excludeIds.contains(lx.id)) {
+          continue;
+        }
         try {
           await lx.waitInited();
           if (lx.supportsPlatform(sourceId)) candidates.add(lx);
@@ -313,7 +359,9 @@ class PlaybackResolver {
         }
       }
     } else {
-      if (excludeIds.contains(sourceId) || _isDead(sourceId)) return null;
+      if (excludeIds.contains(sourceId) || _isDead(sourceId, platformId: sourceId)) {
+        return null;
+      }
       final lx = _registry.runtimeOf(sourceId);
       if (lx != null) candidates.add(lx);
     }
@@ -402,6 +450,7 @@ class PlaybackResolver {
       url: winner.$2,
       sourceId: sourceId,
       winnerId: winner.$1,
+      winnerPlatform: sourceId,
       sourceLabel: _label(sourceId),
       musicId: musicId,
       title: title,

@@ -1,0 +1,10 @@
+# 真实网络联通性测试单独成组，默认不跑。
+#
+# 这些用例直接请求酷我/网易/QQ 的真实接口。并发执行时会同时打同一个
+# 域名，被上游限流后随机失败——不是代码 bug，但会让全套测试不可信。
+#
+# 跑全量（不含网络）：flutter test
+# 只跑网络实测：      flutter test --tags network --run-skipped
+tags:
+  network:
+    skip: "真实网络测试，默认跳过；用 flutter test --tags network --run-skipped 运行"

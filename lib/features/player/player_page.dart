@@ -530,6 +530,12 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    // children 数量必须在拖动全程稳定。
+    //
+    // 真机取证：拖动中途切歌 → item 变化 → 页数 3→1 → Scrollable 重建
+    // → ScrollDragController.update 打到已失效的 activity →
+    // 「activity!.isScrolling」断言失败 → 整页白屏。
+    // 因此封面页永远保留，只是没有歌曲时渲染占位（见 _coverPage）。
     final pages = widget.wideMode
         ? <Widget>[
             const ClipRRect(
@@ -551,7 +557,10 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
         Expanded(
           child: PageView(
             controller: _controller,
-            onPageChanged: (i) => setState(() => _index = i),
+            onPageChanged: (i) => setState(() {
+              // 页数可能因宽屏切换而变化，夹住避免指示点越界
+              _index = i.clamp(0, pages.length - 1);
+            }),
             children: pages,
           ),
         ),
