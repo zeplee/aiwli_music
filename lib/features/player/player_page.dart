@@ -80,8 +80,15 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       child: Focus(
         autofocus: true,
         child: Scaffold(
-          body: SafeArea(
-            child: ValueListenableBuilder<PlayerUiState>(
+          // 透明底：背景由 _CoverBackdrop 负责画到全屏。
+          // 不设的话 Scaffold 会用主题 surface（浅色主题=白色），
+          // 任何没被背景覆盖到的缝隙都会露出白边。
+          backgroundColor: Colors.transparent,
+          // 背景必须铺满到状态栏下：SafeArea 只约束「内容」，
+          // 不能包住背景层。否则 Positioned.fill 也被限制在 SafeArea 内，
+          // 状态栏那条没人绘制 → 露出 Scaffold 默认底色
+          // （浅色主题下就是用户看到的那条白条）。
+          body: ValueListenableBuilder<PlayerUiState>(
           valueListenable: core.state,
           builder: (context, s, _) {
             // 错误改成底部浮层：只在真正失败时弹一次，不占布局高度，
@@ -118,9 +125,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     accent: accent,
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Column(children: [
+                // 内容区才需要避让状态栏/刘海；背景层已经铺满全屏
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(children: [
                 Row(children: [
                   IconButton(
                     onPressed: () => Navigator.of(context).maybePop(),
@@ -352,13 +361,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                       : null,
                 ),
                 const SizedBox(height: 4),
-                  ]),
+                    ]),
+                  ),
                 ),
               ],
             );
           },
         ),
-      ),
       ),
       ),
     );
@@ -901,12 +910,22 @@ class _CoverBackdrop extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hasArt = artUrl != null && artUrl!.isNotEmpty;
+    final veil = PlayerBackdropVeil.of(
+      brightness: scheme.brightness,
+      hasArt: hasArt,
+    );
     return Stack(
       fit: StackFit.expand,
       children: [
         // 底层：主色铺底（无封面时也不留空白）
-        ColoredBox(color: Color.alphaBlend(
-            accent.withValues(alpha: 0.10), scheme.surface)),
+        // 无封面时铺底要更实：否则整页只剩"白纸 + 一点点色"，
+        // 顶部看上去就是一条白带。
+        ColoredBox(
+          color: Color.alphaBlend(
+            accent.withValues(alpha: hasArt ? 0.10 : 0.34),
+            scheme.surface,
+          ),
+        ),
 
         // 封面大幅模糊（参考栖弦 ImmersiveBackground：整块封面糊成色块背景）
         if (hasArt)
@@ -949,21 +968,72 @@ class _CoverBackdrop extends StatelessWidget {
           ),
         ),
 
-        // 可读性遮罩：保证前景文字对比度（封面再花也不影响阅读）
+        // 可读性遮罩：保证前景文字对比度（封面再花也不影响阅读）。
+        //
+        // 强度必须随主题亮度调整：
+        //   深色主题 surface≈近黑 → 74% 遮罩只是压暗，背景色仍透得出来
+        //   浅色主题 surface=纯白 → 74% 遮罩等于糊了一层白纸，
+        //   顶部变成一条难看的白带（用户反馈的「播放页顶部白条」）
+        // 所以浅色主题下把 alpha 降低，让封面主色能透上来。
         DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               colors: [
-                scheme.surface.withValues(alpha: 0.74),
-                scheme.surface.withValues(alpha: 0.96),
-                scheme.surface,
+                scheme.surface.withValues(alpha: veil.top),
+                scheme.surface.withValues(alpha: veil.mid),
+                scheme.surface.withValues(alpha: veil.bottom),
               ],
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+
+/// 播放页背景「可读性遮罩」的三档不透明度。
+///
+/// 强度必须同时考虑**主题亮度**与**有没有封面**：
+///
+///   · 有封面：需要足够遮罩压住花哨图案，保证前景文字可读
+///   · 无封面：底下只有一层主色铺底，遮罩越强越是糊成一张白纸
+///     —— 实测封面回填仅命中 27/1504，绝大多数歌曲都走这条路，
+///     这正是"播放页顶部一条白带"的真正成因（不是布局问题，
+///     背景确实铺满了，只是被白色遮罩糊掉了）。
+///
+/// 浅色主题的 surface 是纯白，同样的 alpha 比深色主题更具破坏性，
+/// 所以浅色一律更低。
+@immutable
+class PlayerBackdropVeil {
+  const PlayerBackdropVeil({
+    required this.top,
+    required this.mid,
+    required this.bottom,
+  });
+
+  final double top;
+  final double mid;
+  final double bottom;
+
+  factory PlayerBackdropVeil.of({
+    required Brightness brightness,
+    required bool hasArt,
+  }) {
+    final isLight = brightness == Brightness.light;
+    if (hasArt) {
+      return PlayerBackdropVeil(
+        top: isLight ? 0.52 : 0.74,
+        mid: isLight ? 0.66 : 0.96,
+        bottom: isLight ? 0.80 : 1.0,
+      );
+    }
+    return PlayerBackdropVeil(
+      top: isLight ? 0.10 : 0.30,
+      mid: isLight ? 0.16 : 0.45,
+      bottom: isLight ? 0.28 : 0.72,
     );
   }
 }
