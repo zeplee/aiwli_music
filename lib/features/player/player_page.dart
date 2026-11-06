@@ -316,12 +316,24 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 //   · 「播放队列」原在顶栏右侧，是最高频的入口却离拇指最远。
                 //     移到底部左下角。
                 Row(children: [
-                  // 左：播放队列（拇指自然落点）
+                  // 左侧放低频但有价值的两个开关：队列 / K 歌模式。
+                  // 都是"整首歌期间可能想切一下"的操作，比顶栏更顺手。
                   IconButton(
                     tooltip: '播放队列',
                     onPressed: () => showQueueSheet(context),
                     icon: Icon(Icons.queue_music,
                         color: scheme.onSurfaceVariant),
+                  ),
+                  // K 歌模式（人声消除）：开启后高亮，一眼可辨
+                  IconButton(
+                    tooltip: s.karaokeMode ? 'K 歌模式 · 已开启' : 'K 歌模式（去人声）',
+                    onPressed: () => core.setKaraokeMode(!s.karaokeMode),
+                    icon: Icon(
+                      Icons.mic_external_on,
+                      color: s.karaokeMode
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
+                    ),
                   ),
                   const Spacer(),
                   IconButton(

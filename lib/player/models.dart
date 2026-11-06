@@ -16,6 +16,7 @@ class EngineSnapshot {
   final Duration? duration;
   final Duration buffered;
   final double speed;
+
   final Object? error;
 }
 
@@ -87,6 +88,7 @@ class PlayerUiState {
     this.shuffleOn = false,
     this.speed = 1.0,
     this.buffered = Duration.zero,
+    this.karaokeMode = false,
   });
   final EngineProcessing processing;
   final bool playing;
@@ -98,6 +100,11 @@ class PlayerUiState {
   final RepeatMode repeatMode;
   final bool shuffleOn;
   final double speed;
+
+  /// K 歌模式：消除人声只留伴奏（立体声相减实现）。
+  /// 不是真·音源分离，属于"能用"级别的近似——见 MediaKitEngine
+  /// 里 setVocalRemoval 的注释。
+  final bool karaokeMode;
 
   /// 已缓冲到的位置（进度条浅色叠加用）。
   final Duration buffered;
@@ -117,6 +124,7 @@ class PlayerUiState {
     bool? shuffleOn,
     double? speed,
     Duration? buffered,
+    bool? karaokeMode,
   }) {
     return PlayerUiState(
       processing: processing ?? this.processing,
@@ -130,6 +138,7 @@ class PlayerUiState {
       shuffleOn: shuffleOn ?? this.shuffleOn,
       speed: speed ?? this.speed,
       buffered: buffered ?? this.buffered,
+      karaokeMode: karaokeMode ?? this.karaokeMode,
     );
   }
 }

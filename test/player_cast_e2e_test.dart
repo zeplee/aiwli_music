@@ -81,6 +81,14 @@ class _FakeEngine implements AudioEngine {
   @override
   Future<void> setEqualizer(List<double>? gainsDb) async {}
   @override
+  Future<void> setVocalRemoval(bool enabled,
+      {double bassCompensationDb = 3}) async {
+    vocalRemovalCalls.add(enabled);
+  }
+
+  /// 记录去人声开关调用，便于断言 UI 与引擎是否接通。
+  final vocalRemovalCalls = <bool>[];
+  @override
   Future<void> dispose() async => _ctrl.close();
 
   @override

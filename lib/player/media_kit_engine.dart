@@ -155,21 +155,58 @@ class MediaKitEngine implements AudioEngine {
     _emit(speed: r);
   }
 
+  /// 当前均衡器增益（null = 未启用）。留着以便与 K 歌模式一起重建滤镜链。
+  List<double>? _eqGains;
+
+  /// K 歌模式（人声消除）开关。
+  bool _vocalRemoval = false;
+  double _bassCompDb = 3;
+
   @override
   Future<void> setEqualizer(List<double>? gainsDb) async {
+    _eqGains =
+        (gainsDb == null || gainsDb.every((g) => g == 0)) ? null : gainsDb;
+    await _applyAudioFilters();
+  }
+
+  @override
+  Future<void> setVocalRemoval(bool enabled,
+      {double bassCompensationDb = 3}) async {
+    _vocalRemoval = enabled;
+    _bassCompDb = bassCompensationDb;
+    await _applyAudioFilters();
+  }
+
+  /// 把 EQ 与去人声合并成**一条** mpv `af` 链。
+  ///
+  /// 必须合并：mpv 的 `af` 是整体属性，两次 setProperty 会互相覆盖——
+  /// 先设 EQ 再开 K 歌，EQ 就静默失效了。
+  Future<void> _applyAudioFilters() async {
     final platform = _player.platform;
     if (platform is! NativePlayer) return;
-    if (gainsDb == null || gainsDb.every((g) => g == 0)) {
-      await platform.setProperty('af', '');
-      return;
-    }
-    // 10 段 peaking EQ 链（lavfi equalizer），Hz 对应 AppSettings.eqBandHz
-    final hz = const [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
     final chain = <String>[];
-    for (var i = 0; i < gainsDb.length && i < hz.length; i++) {
-      final g = gainsDb[i].clamp(-12.0, 12.0);
-      chain.add('equalizer=f=${hz[i]}:w=1.0:t=q:g=${g.toStringAsFixed(2)}');
+
+    // ① 人声消除：立体声相减（L-R），人声在中置因而被抵消。
+    //    用 `pan` 而不是 `stereotools`：pan 是 lavfi 基础滤镜，
+    //    media_kit 各平台构建基本都带，兼容性最好。
+    if (_vocalRemoval) {
+      chain.add('pan=stereo|c0=c0-c1|c1=c1-c0');
+      // 抵消中置会把低频一起带走，补一点低音回来
+      if (_bassCompDb > 0) {
+        chain.add('bass=g=${_bassCompDb.toStringAsFixed(1)}:f=150:w=0.6');
+      }
     }
+
+    // ② 均衡器（10 段 peaking），Hz 对应 AppSettings.eqBandHz
+    final gains = _eqGains;
+    if (gains != null) {
+      final hz = const [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+      for (var i = 0; i < gains.length && i < hz.length; i++) {
+        final g = gains[i].clamp(-12.0, 12.0);
+        chain.add('equalizer=f=${hz[i]}:w=1.0:t=q:g=${g.toStringAsFixed(2)}');
+      }
+    }
+
     await platform.setProperty('af', chain.join(','));
   }
 

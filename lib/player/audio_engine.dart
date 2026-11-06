@@ -16,7 +16,19 @@ abstract interface class AudioEngine {
   Future<void> setSpeed(double v);
 
   /// 10 段均衡器（dB，对应 AppSettings.eqBandHz）；null/关 = 关闭。
+  ///
+  /// 注意：实现方必须把 EQ 与 [setVocalRemoval] 合并成**同一条** mpv
+  /// `af` 滤镜链，否则两者会互相覆盖（后设置的赢，先设置的静默失效）。
   Future<void> setEqualizer(List<double>? gainsDb);
+
+  /// 人声消除（K 歌 / 伴奏模式）。
+  ///
+  /// 原理：立体声混音里人声通常位于**中置**（左右声道同相）。
+  /// 把 L-R 相减即可抵消中置成分，留下伴奏。副作用是低频也会被
+  /// 削弱（bass 多在中央），所以参数里带一个低频补偿量。
+  ///
+  /// [enabled] false 表示关闭，恢复原声。
+  Future<void> setVocalRemoval(bool enabled, {double bassCompensationDb});
 
   Future<void> dispose();
 
@@ -49,6 +61,9 @@ class StubEngine implements AudioEngine {
   Future<void> setSpeed(double v) async {}
   @override
   Future<void> setEqualizer(List<double>? gainsDb) async {}
+  @override
+  Future<void> setVocalRemoval(bool enabled,
+      {double bassCompensationDb = 3}) async {}
   @override
   Future<void> dispose() async {}
   @override
