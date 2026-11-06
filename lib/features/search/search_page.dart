@@ -640,20 +640,16 @@ class _SearchPageState extends ConsumerState<SearchPage>
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
-      // 点击行 = 进入播放页并自动播放；右侧 ▶ = 就地播放不跳转
-      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-        IconButton(
-          icon: Icon(Icons.play_circle_outline,
-              size: 22, color: scheme.primary),
-          tooltip: '播放',
-          onPressed: onTap,
-        ),
-        IconButton(
-          icon: const Icon(Icons.download_for_offline_outlined, size: 20),
-          tooltip: '下载',
-          onPressed: () => unawaited(_download(m)),
-        ),
-      ]),
+      // 点击整行 = 播放（并进播放页）。右侧只留「下载」。
+      //
+      // 原来右侧还有一个 ▶ 按钮，但它的 onPressed 与整行 onTap 是
+      // **同一个回调**（都走 _playAll → 设队列 + 跳播放页）——
+      // 两个入口做同一件事，纯属冗余，还让每个结果行多占 40dp 宽度。
+      trailing: IconButton(
+        icon: const Icon(Icons.download_for_offline_outlined, size: 20),
+        tooltip: '下载',
+        onPressed: () => unawaited(_download(m)),
+      ),
       onTap: onTap,
     );
   }

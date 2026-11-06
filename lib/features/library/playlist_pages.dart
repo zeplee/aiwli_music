@@ -144,30 +144,20 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                       maxLines: 1, overflow: TextOverflow.ellipsis),
                   subtitle: Text(e.artist,
                       maxLines: 1, overflow: TextOverflow.ellipsis),
+                  // 右侧只留「移出歌单」。
+                  //
+                  // 原来还有一个 ▶ 按钮：它走 setQueue 但不跳页，
+                  // 而整行 onTap 走 setQueue **并**跳播放页 ——
+                  // 同一个动作两个入口，差别只有"要不要跳页"，
+                  // 用户无法预期，也白白挤占 40dp 行宽。
                   trailing: _batchMode
                       ? null
-                      : Row(mainAxisSize: MainAxisSize.min, children: [
-                          IconButton(
-                            icon: Icon(Icons.play_circle_outline,
-                                size: 22, color: scheme.primary),
-                            tooltip: '播放',
-                            onPressed: () {
-                              final items = [
-                                for (final e in playlist.entries)
-                                  entryToItem(e)
-                              ];
-                              ref
-                                  .read(playerCoreProvider)
-                                  .setQueue(items, index: i);
-                            },
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close, size: 20),
-                            tooltip: '移出歌单',
-                            onPressed: () =>
-                                service.removeEntry(playlist.id, i),
-                          ),
-                        ]),
+                      : IconButton(
+                          icon: const Icon(Icons.close, size: 20),
+                          tooltip: '移出歌单',
+                          onPressed: () =>
+                              service.removeEntry(playlist.id, i),
+                        ),
                   onTap: () {
                     if (_batchMode) {
                       _toggleSelect(i);

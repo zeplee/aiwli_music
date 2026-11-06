@@ -151,13 +151,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     icon: const Icon(Icons.keyboard_arrow_down, size: 30),
                   ),
                   const Spacer(),
-                  // 播放队列：最常用，单独留一个入口
-                  IconButton(
-                    tooltip: '播放队列',
-                    onPressed: () => showQueueSheet(context),
-                    icon: Icon(Icons.queue_music,
-                        color: scheme.onSurfaceVariant),
-                  ),
+                  // 播放队列已移到底部左下角（顶栏留给低频操作）
                   // 倍速：非 1x 时高亮（一眼看出当前是变速播放）。
                   //
                   // 点击区必须撑到 48dp：原来只有 61x33，夹在两个 48dp 的
@@ -330,27 +324,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   ],
                 ),
                 const SizedBox(height: 8),
-                Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                // 底部控制区：中间放走带控制，两端放「队列」和「播放模式」。
+                //
+                // 布局调整（用户反馈）：
+                //   · 「顺序/单曲/随机」原是**两个独立按钮**分居左右下角，
+                //     中间夹着上一曲/暂停/下一曲——手指从中心往外够，
+                //     命中率低。现在合并成一个三态按钮，放右下角。
+                //   · 「播放队列」原在顶栏右侧，是最高频的入口却离拇指最远。
+                //     移到底部左下角。
+                Row(children: [
+                  // 左：播放队列（拇指自然落点）
                   IconButton(
-                    onPressed: () {
-                      final nextMode = switch (s.repeatMode) {
-                        RepeatMode.off => RepeatMode.all,
-                        RepeatMode.all => RepeatMode.one,
-                        RepeatMode.one => RepeatMode.off,
-                      };
-                      core.setRepeat(nextMode);
-                    },
-                    icon: Icon(
-                      switch (s.repeatMode) {
-                        RepeatMode.off => Icons.repeat,
-                        RepeatMode.all => Icons.repeat,
-                        RepeatMode.one => Icons.repeat_one,
-                      },
-                      color: s.repeatMode == RepeatMode.off
-                          ? scheme.onSurfaceVariant
-                          : scheme.primary,
-                    ),
+                    tooltip: '播放队列',
+                    onPressed: () => showQueueSheet(context),
+                    icon: Icon(Icons.queue_music,
+                        color: scheme.onSurfaceVariant),
                   ),
+                  const Spacer(),
                   IconButton(
                       onPressed: core.previous,
                       icon: const Icon(Icons.skip_previous, size: 36)),
@@ -358,12 +348,18 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   IconButton(
                       onPressed: () => core.next(),
                       icon: const Icon(Icons.skip_next, size: 36)),
-                  IconButton(
-                    onPressed: () => core.setShuffle(!s.shuffleOn),
-                    icon: Icon(Icons.shuffle,
-                        color: s.shuffleOn
-                            ? scheme.primary
-                            : scheme.onSurfaceVariant),
+                  const Spacer(),
+                  // 右：播放模式三态切换
+                  _PlayModeButton(
+                    mode: PlayModeX.from(
+                        repeat: s.repeatMode, shuffle: s.shuffleOn),
+                    onTap: () {
+                      final next = PlayModeX.from(
+                              repeat: s.repeatMode, shuffle: s.shuffleOn)
+                          .next;
+                      core.setRepeat(next.repeatMode);
+                      core.setShuffle(next.shuffleOn);
+                    },
                   ),
                 ]),
                 // 加载提示：固定高度占位，出现/消失不推挤布局
@@ -414,6 +410,37 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
     return '$m:$s';
+  }
+}
+
+/// 播放模式三态按钮：顺序 → 单曲循环 → 随机。
+///
+/// 合并理由见 [PlayMode] 的注释：原来两个独立按钮（循环/随机）互斥却
+/// 各占一角，且离拇指远。三态按钮更省空间、也更符合主流播放器心智。
+class _PlayModeButton extends StatelessWidget {
+  const _PlayModeButton({required this.mode, required this.onTap});
+  final PlayMode mode;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final (icon, label) = switch (mode) {
+      PlayMode.sequential => (Icons.repeat, '顺序播放'),
+      PlayMode.repeatOne => (Icons.repeat_one, '单曲循环'),
+      PlayMode.shuffle => (Icons.shuffle, '随机播放'),
+    };
+    return IconButton(
+      tooltip: label,
+      onPressed: onTap,
+      icon: Icon(
+        icon,
+        // 非顺序态高亮：一眼看出「现在不是默认顺序」
+        color: mode == PlayMode.sequential
+            ? scheme.onSurfaceVariant
+            : scheme.primary,
+      ),
+    );
   }
 }
 
