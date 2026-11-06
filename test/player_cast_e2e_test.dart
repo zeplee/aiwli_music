@@ -140,6 +140,8 @@ PlayerItem _item(String title, String artist, String musicId,
     );
 
 void main() {
+  fallbackResumeTests();
+
   late _FakeEngine engine;
   late _RecordingCast cast;
   late PlayerCore core;
@@ -528,4 +530,169 @@ void main() {
       expect(engine.loadedUrls, isEmpty);
     });
   });
+}
+
+/// 换源续播：用户已听过的部分不应该重来。
+///
+/// 真机症状：幻音给的死链播了 20 多秒才报错，换源后进度条从
+/// 00:22 跳回 00:00 —— 用户看到的就是「进度条不是从头」。
+void fallbackResumeTests() {
+  group('换源续播（进度不能跳回 0）', () {
+    test('换源后 seek 回原进度', () async {
+      final eng = _ResumableEngine();
+      var round = 0;
+      final pc = PlayerCore(
+        engine: eng,
+        cast: _RecordingCast(),
+        urlResolver: (item, exclude) async {
+          round++;
+          return ResolvedPlayback(
+            url: round == 1
+                ? 'https://dead.example/1.mp3'
+                : 'https://live.example/1.mp3',
+            sourceId: 'kw',
+            winnerId: '源$round',
+            winnerPlatform: 'kw',
+            sourceLabel: '酷我',
+            musicId: item.musicId,
+            title: item.title,
+            artist: item.artist,
+          );
+        },
+        onSourceUnplayable: (r, e) {},
+      );
+      await pc.setQueue([_item('听到一半换源', '歌手', '1')]);
+      await Future<void>.delayed(Duration.zero);
+
+      // 模拟：死链播到 22 秒后报错
+      eng.simulateProgress(const Duration(seconds: 22));
+      eng.emitError('Failed to open https://dead.example/1.mp3');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(round, greaterThan(1), reason: '应触发换源');
+      expect(eng.seekedTo, isNotNull, reason: '换源后必须 seek 回原位置');
+      expect(eng.seekedTo!.inSeconds, closeTo(22, 2),
+          reason: '应该恢复到大致的原进度，而不是从头播');
+      await pc.dispose();
+    });
+
+    test('原进度超过新地址时长时从头播（不越界）', () async {
+      final eng = _ResumableEngine();
+      var round = 0;
+      final pc = PlayerCore(
+        engine: eng,
+        cast: _RecordingCast(),
+        urlResolver: (item, exclude) async {
+          round++;
+          return ResolvedPlayback(
+            url: round == 1
+                ? 'https://dead.example/1.mp3'
+                : 'https://live.example/1.mp3',
+            sourceId: 'kw',
+            winnerId: '源$round',
+            winnerPlatform: 'kw',
+            sourceLabel: '酷我',
+            musicId: item.musicId,
+            title: item.title,
+            artist: item.artist,
+          );
+        },
+        onSourceUnplayable: (r, e) {},
+      );
+      await pc.setQueue([_item('短歌', '歌手', '1')]);
+      await Future<void>.delayed(Duration.zero);
+
+      // 原位置 200 秒，但新地址只有 60 秒
+      eng.simulateProgress(const Duration(seconds: 200));
+      eng.newDuration = const Duration(seconds: 60);
+      eng.emitError('Failed to open https://dead.example/1.mp3');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      if (eng.seekedTo != null) {
+        expect(eng.seekedTo!.inSeconds, lessThan(60),
+            reason: '不能 seek 到超出新地址时长的位置');
+      }
+      await pc.dispose();
+    });
+
+    test('刚开始就失败（<1s）不做无意义 seek', () async {
+      final eng = _ResumableEngine();
+      var round = 0;
+      final pc = PlayerCore(
+        engine: eng,
+        cast: _RecordingCast(),
+        urlResolver: (item, exclude) async {
+          round++;
+          return ResolvedPlayback(
+            url: round == 1
+                ? 'https://dead.example/1.mp3'
+                : 'https://live.example/1.mp3',
+            sourceId: 'kw',
+            winnerId: '源$round',
+            winnerPlatform: 'kw',
+            sourceLabel: '酷我',
+            musicId: item.musicId,
+            title: item.title,
+            artist: item.artist,
+          );
+        },
+        onSourceUnplayable: (r, e) {},
+      );
+      await pc.setQueue([_item('秒挂', '歌手', '1')]);
+      await Future<void>.delayed(Duration.zero);
+
+      eng.simulateProgress(const Duration(milliseconds: 300));
+      eng.emitError('Failed to open https://dead.example/1.mp3');
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      expect(eng.seekedTo, isNull, reason: '位置太靠前就别 seek 了');
+      await pc.dispose();
+    });
+  });
+}
+
+/// 能记录 seek 目标、可模拟进度的假引擎。
+class _ResumableEngine extends _FakeEngine {
+  Duration? seekedTo;
+  Duration newDuration = const Duration(minutes: 3);
+  Duration _pos = Duration.zero;
+
+  void simulateProgress(Duration p) => _pos = p;
+
+  void emitError(String msg) {
+    // 先把 position 写进快照，让 PlayerCore 拿到"换源前的位置"
+    emitPos(_pos);
+    emit(EngineSnapshot(
+      processing: EngineProcessing.error,
+      error: msg,
+      position: _pos,
+      duration: newDuration,
+    ));
+  }
+
+  void emitPos(Duration p) {
+    emit(EngineSnapshot(
+      processing: EngineProcessing.ready,
+      playing: true,
+      position: p,
+      duration: newDuration,
+    ));
+  }
+
+  @override
+  Future<void> seek(Duration position) async => seekedTo = position;
+
+  @override
+  Future<Duration?> load(Uri source,
+      {Map<String, String>? headers, String? formatHint}) async {
+    loadedUrls.add(source.toString());
+    if (failingUrls.contains(source.toString())) {
+      throw Exception('Failed to open $source');
+    }
+    _pos = Duration.zero;
+    return newDuration;
+  }
 }

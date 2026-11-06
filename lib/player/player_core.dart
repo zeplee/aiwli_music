@@ -477,6 +477,11 @@ class PlayerCore {
     _fallbackInFlight = true;
     _fallbackCount++;
     final gen = _loadGeneration;
+    // 换源前记住播放位置：新地址是**同一首歌的另一个链接**，
+    // 用户已经听过的部分不应该重来。
+    // 真机症状：幻音给的死链播了 20 多秒才报错，换源后进度条
+    // 从 00:22 跳回 00:00 —— 用户看到的就是"进度条不是从头"。
+    final resumeAt = state.value.position;
     final excludes = {..._activeExcludes, resolved.winnerId};
     _onSourceUnplayable?.call(resolved, snap.error ?? 'open failed');
     state.value = state.value.copyWith(
@@ -503,6 +508,19 @@ class PlayerCore {
       _activeExcludes = excludes;
       await _engine.load(Uri.parse(next.url));
       if (gen != _loadGeneration) return;
+      // 恢复到换源前的进度（容错：超出新地址时长时从头播）
+      if (resumeAt > const Duration(seconds: 1)) {
+        final dur = _engine.current.duration;
+        final target =
+            dur != null && resumeAt >= dur ? Duration.zero : resumeAt;
+        try {
+          await _engine.seek(target);
+        } catch (_) {
+          // 个别源不支持精确 seek：退化为从头播，不影响可播性
+        }
+        AppLog.i('Fallback',
+            '换源后恢复进度 ${target.inMilliseconds}ms（原 ${resumeAt.inMilliseconds}ms）');
+      }
       await _engine.play();
       _expectCompletion = true;
       // 回退成功：**保留** _activeResolved（陈旧事件守卫必须继续有效），
