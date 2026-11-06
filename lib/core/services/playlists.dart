@@ -80,6 +80,7 @@ class Playlist {
     this.entries = const [],
     this.system = false,
     this.folder,
+    this.archived = false,
   });
   final String id;
   final String name;
@@ -94,10 +95,18 @@ class Playlist {
   /// 用途：按人/场景分组，例如「李泽鹏」文件夹下放他的收藏与歌单。
   final String? folder;
 
+  /// 已归档：**数据完整保留**（条目不删、WebDAV 照常备份），
+  /// 只是不在歌单列表里渲染。
+  ///
+  /// 用途：lx 同步来的「试听列表」本质是试听历史，与曲库的「最近」
+  /// Tab 语义重复。归档而不是删除，避免误伤上千首用户数据。
+  final bool archived;
+
   Playlist copyWith({
     String? name,
     List<PlaylistEntry>? entries,
     Object? folder = _unset,
+    bool? archived,
   }) =>
       Playlist(
         id: id,
@@ -107,6 +116,7 @@ class Playlist {
         system: system,
         // 用哨兵区分「不改」与「置空」
         folder: identical(folder, _unset) ? this.folder : folder as String?,
+        archived: archived ?? this.archived,
       );
 
   factory Playlist.fromJson(Map<Object?, Object?> m) => Playlist(
@@ -115,6 +125,7 @@ class Playlist {
         createdAtMs: (m['createdAtMs'] as num?)?.toInt() ?? 0,
         system: m['system'] == true,
         folder: m['folder'] as String?,
+        archived: m['archived'] == true,
         entries: ((m['entries'] as List?) ?? const [])
             .map((e) => PlaylistEntry.fromJson(e as Map))
             .toList(),
@@ -127,6 +138,7 @@ class Playlist {
           'entries': entries.map((e) => e.toJson()).toList(),
         if (system) 'system': true,
         if (folder != null) 'folder': folder,
+        if (archived) 'archived': true,
       };
 }
 

@@ -119,12 +119,12 @@ void main() {
       expect(svc.items, isEmpty);
     });
 
-    test('导入受 maxItems 上限约束', () async {
+    test('导入不截断（WebDAV 恢复不能丢历史）', () async {
       final svc = PlayHistoryService(_MemStore());
       final now = DateTime.now();
       await svc.importJson(jsonEncode({
         'items': [
-          for (var i = 0; i < PlayHistoryService.maxItems + 20; i++)
+          for (var i = 0; i < 500; i++)
             {
               'sourceId': 'kw',
               'musicId': '$i',
@@ -134,7 +134,7 @@ void main() {
             }
         ]
       }));
-      expect(svc.items.length, PlayHistoryService.maxItems);
+      expect(svc.items.length, 500, reason: '恢复必须全量，不能静默截断');
     });
   });
 }

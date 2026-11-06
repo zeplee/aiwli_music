@@ -54,13 +54,19 @@ class HistoryItem {
 
 /// 最近播放：
 /// - 同一首歌只保留一条（重播时提到最前并刷新时间），避免列表被单曲灌满
-/// - 上限 [maxItems] 条，超出丢弃最旧的
+/// - 不设条数上限（见下方说明）
 /// - SettingsStore JSON 持久化（与收藏/歌单同一套约定，无需 SQLite）
 class PlayHistoryService extends SafeNotifier {
   PlayHistoryService(this._store);
   final SettingsStore _store;
   static const _file = 'play_history.json';
-  static const int maxItems = 200;
+  /// 不设条数上限。
+  ///
+  /// 曾经的 200 条上限没有实际理由：1882 首的 JSON 约 560KB，
+  /// 比歌单文件（614KB）还小，而歌单一直跑得好好的。
+  /// 这里还藏着一个隐患——`importJson` 用 `take(maxItems)` 会让
+  /// WebDAV 恢复**静默截断**用户的历史，属于数据丢失。
+  /// 记录由用户自己管理（单条删除 / 清空），不需要程序替他们决定。
 
   final List<HistoryItem> _items = [];
   bool _loaded = false;
@@ -145,11 +151,38 @@ class PlayHistoryService extends SafeNotifier {
         playedAt: DateTime.now(),
       ),
     );
-    if (_items.length > maxItems) {
-      _items.removeRange(maxItems, _items.length);
-    }
     await _flush();
     notifyListeners();
+  }
+
+  /// 批量并入外部条目（试听列表合并进「最近」）。
+  ///
+  /// 与 [importJson] 的区别：这里接受内存对象，并按 key 去重。
+  /// [playedAt] 为 null 时用「当前时间往前推」的均匀分布，
+  /// 保证这批条目排在已有历史之后但彼此有序（越靠前越新）。
+  /// 返回实际新增条数。
+  Future<int> importItems(List<HistoryItem> items) async {
+    await ensureLoaded();
+    final byKey = {for (final e in _items) e.key: e};
+    var added = 0;
+    for (final it in items) {
+      if (it.musicId.isEmpty) continue;
+      final existing = byKey[it.key];
+      if (existing == null) {
+        byKey[it.key] = it;
+        added++;
+      } else if (it.playedAt.isAfter(existing.playedAt)) {
+        byKey[it.key] = it;
+      }
+    }
+    if (added == 0) return 0;
+    _items
+      ..clear()
+      ..addAll(byKey.values.toList()
+        ..sort((a, b) => b.playedAt.compareTo(a.playedAt)));
+    await _flush();
+    notifyListeners();
+    return added;
   }
 
   Future<void> remove(String sourceId, String musicId) async {
@@ -191,7 +224,7 @@ class PlayHistoryService extends SafeNotifier {
       ..sort((a, b) => b.playedAt.compareTo(a.playedAt));
     _items
       ..clear()
-      ..addAll(merged.take(maxItems));
+      ..addAll(merged);
     await _flush();
     notifyListeners();
     return added;

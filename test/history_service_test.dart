@@ -53,17 +53,18 @@ void main() {
       expect(svc.items.length, 2, reason: '源前缀不同视为不同曲目');
     });
 
-    test('超出上限丢弃最旧', () async {
+    test('不设条数上限：超过以往 200 条也全部保留', () async {
+      // 曾经的 200 条上限没有理由，且会让 WebDAV 恢复静默截断，
+      // 已在合并「试听列表」(1882 首) 时移除。这里锁死"不截断"。
       final store = _MemStore();
       final svc = PlayHistoryService(store);
-      for (var i = 0; i < PlayHistoryService.maxItems + 5; i++) {
+      for (var i = 0; i < 300; i++) {
         await svc.record(
             sourceId: 'kw', musicId: '$i', title: 'T$i', artist: 'a');
       }
-      expect(svc.items.length, PlayHistoryService.maxItems);
+      expect(svc.items.length, 300, reason: '不能有任何截断');
       // 最新的是最后写入的那条
-      expect(svc.items.first.musicId,
-          '${PlayHistoryService.maxItems + 4}');
+      expect(svc.items.first.musicId, '299');
     });
 
     test('持久化后可重新加载', () async {

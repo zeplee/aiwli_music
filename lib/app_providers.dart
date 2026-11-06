@@ -178,7 +178,7 @@ final playlistsProvider = ChangeNotifierProvider<PlaylistService>((ref) {
   final s = PlaylistService(store);
   // load 完成后再迁移旧 favorites.json（幂等：已迁移则无条目可并）
   s.load().then((_) async {
-    await migrateLegacyFavorites(s, store);
+    await migrateLegacyFavorites(s, store, ref.read(playHistoryProvider));
     // 每次启动收尾：已有文件夹收藏时清掉顶层那份（幂等，防止复活）
     s.dropTopLevelFavoritesIfFoldered();
   });
@@ -465,7 +465,7 @@ final searchHistoryProvider =
 ///
 /// 迁移完把 favorites.json 改名备份，避免重复迁移。
 Future<void> migrateLegacyFavorites(PlaylistService playlists,
-    SettingsStore store) async {
+    SettingsStore store, PlayHistoryService history) async {
   // 全新用户（没有任何歌单）→ 建一份顶层收藏，保证有收藏入口
   if (playlists.playlists.isEmpty) {
     playlists.ensureFavoritesIn(null);
@@ -526,12 +526,62 @@ Future<void> migrateLegacyFavorites(PlaylistService playlists,
     AppLog.i('Migrate', '已删除陈旧歌单「我的收藏（旧）」(${stale.entries.length} 首，内容与系统收藏重复)');
   }
 
-  // 3) 「试听列表」保持顶层（不要额外的导入文件夹）
-  for (final t in playlists.playlists
-      .where((p) => p.name == '试听列表' && p.folder != null)
-      .toList()) {
-    playlists.setFolder(t.id, null);
-    AppLog.i('Migrate', '「试听列表」已移回顶层歌单');
+  // 3) 「试听列表」并入「最近」播放历史，然后从歌单列表移除。
+  //
+  //    用户需求：lx 同步来的「试听列表」本质就是试听历史，与曲库的
+  //    「最近」Tab 语义重复，不该两处并存。
+  //
+  //    安全性：
+  //      - 只执行一次（playlists_flags.json 记 mergedTrialIntoHistory）
+  //      - importItems 按 key 去重，不污染已有历史
+  //      - 有任何一条没进历史就**不删歌单**（宁可留着，绝不丢数据）
+  final flags = await store.load('playlists_flags.json');
+  if (flags['mergedTrialIntoHistory'] != true) {
+    final trials =
+        playlists.playlists.where((p) => p.name == '试听列表').toList();
+    if (trials.isEmpty) {
+      await store.flush('playlists_flags.json',
+          {...flags, 'mergedTrialIntoHistory': true});
+    } else {
+      var totalAdded = 0;
+      var allOk = true;
+      final base = DateTime.now();
+      for (final t in trials) {
+        // 越靠前的条目算越新：以 base 为起点往前推 1 秒/条
+        final items = <HistoryItem>[];
+        for (var i = 0; i < t.entries.length; i++) {
+          final e = t.entries[i];
+          items.add(HistoryItem(
+            sourceId: e.sourceId,
+            musicId: e.musicId,
+            title: e.title,
+            artist: e.artist,
+            album: e.album,
+            picUrl: e.picUrl,
+            durationMs: e.durationMs,
+            playedAt: base.subtract(Duration(seconds: i)),
+          ));
+        }
+        final added = await history.importItems(items);
+        totalAdded += added;
+        AppLog.i('Migrate',
+            '试听列表并入「最近」：新增 $added / ${t.entries.length} 首');
+        final inHistory = t.entries.every((e) => history.items
+            .any((h) => h.key == '${e.sourceId}/${e.musicId}'));
+        if (inHistory) {
+          playlists.delete(t.id);
+        } else {
+          allOk = false;
+          AppLog.w('Migrate', '试听列表未能全部并入历史，歌单保留不删');
+        }
+      }
+      if (allOk) {
+        await store.flush('playlists_flags.json',
+            {...flags, 'mergedTrialIntoHistory': true});
+        AppLog.i('Migrate',
+            '试听列表已全部并入「最近」并移除歌单（新增 $totalAdded 条历史）');
+      }
+    }
   }
 
   // 4) 多用户共用：把人名歌单升级为「文件夹」，并按用户意图整理收藏。
