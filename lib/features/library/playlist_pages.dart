@@ -9,6 +9,7 @@ import '../../core/services/backup_service.dart' show parseTextPlaylist;
 import '../../core/services/playlists.dart';
 import '../../player/player_core.dart';
 import '../player/player_page.dart';
+import 'playlist_search.dart';
 
 /// 歌单详情：条目列表 + 播放全部 + 删除/重命名 + 条目移除。
 class PlaylistDetailPage extends ConsumerStatefulWidget {
@@ -22,12 +23,38 @@ class PlaylistDetailPage extends ConsumerStatefulWidget {
 class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
   /// 批量选择模式（参考栖弦 playlist_detail_page 的 _batchMode）。
   bool _batchMode = false;
+
+  /// 歌单内搜索：展开态 + 关键词（参考栖弦 ExpandingHeaderSearch）。
+  bool _searchOpen = false;
+  String _searchQuery = '';
+  final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
   final Set<int> _selected = <int>{};
 
   void _exitBatch() => setState(() {
         _batchMode = false;
         _selected.clear();
       });
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  /// 搜索结果（保留原始下标——点击必须播原列表里那首，不能播错的）。
+  List<({int index, PlaylistEntry entry})> _filtered(Playlist playlist) =>
+      filterEntriesByQuery(playlist.entries, _searchQuery);
+
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    setState(() {
+      _searchOpen = false;
+      _searchQuery = '';
+      _searchCtrl.clear();
+    });
+  }
 
   void _toggleSelect(int index) {
     setState(() {
@@ -69,7 +96,20 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                 onPressed: _exitBatch,
               )
             : null,
-        title: Text(_batchMode ? '已选 ${_selected.length}' : playlist.name),
+        title: _searchOpen
+            ? TextField(
+                controller: _searchCtrl,
+                focusNode: _searchFocus,
+                autofocus: true,
+                style: const TextStyle(fontSize: 16),
+                decoration: const InputDecoration(
+                  hintText: '搜歌名 / 歌手 / 专辑',
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                onChanged: (v) => setState(() => _searchQuery = v),
+              )
+            : Text(_batchMode ? '已选 ${_selected.length}' : playlist.name),
         actions: _batchMode
             ? [
                 IconButton(
@@ -101,6 +141,28 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                 ),
               ]
             : [
+                // 歌单内搜索（参考栖弦 ExpandingHeaderSearch）：
+                // 点一下把标题换成输入框，再点变回标题。
+                // 大歌单（几百上千首）没有搜索基本没法用。
+                if (_searchOpen)
+                  IconButton(
+                    tooltip: '关闭搜索',
+                    icon: const Icon(Icons.close),
+                    onPressed: _closeSearch,
+                  )
+                else
+                  IconButton(
+                    tooltip: '搜索歌单内歌曲',
+                    icon: const Icon(Icons.search),
+                    onPressed: playlist.entries.isEmpty
+                        ? null
+                        : () {
+                            setState(() => _searchOpen = true);
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (mounted) _searchFocus.requestFocus();
+                            });
+                          },
+                  ),
                 IconButton(
                   tooltip: '多选',
                   icon: const Icon(Icons.checklist),
@@ -125,10 +187,22 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           ? Center(
               child: Text('空歌单，去音乐库长按歌曲加入',
                   style: TextStyle(color: scheme.onSurfaceVariant)))
-          : ListView.builder(
-              itemCount: playlist.entries.length,
-              itemBuilder: (context, i) {
-                final e = playlist.entries[i];
+          : Builder(builder: (context) {
+              // 搜索时用过滤结果，但**保留原始下标**——
+              // 点击/多选都按 playlist.entries 的原位置操作，
+              // 否则会播错歌、删错条目。
+              final visible = _filtered(playlist);
+              if (visible.isEmpty) {
+                return Center(
+                  child: Text('没有匹配「$_searchQuery」的歌曲',
+                      style: TextStyle(color: scheme.onSurfaceVariant)),
+                );
+              }
+              return ListView.builder(
+                itemCount: visible.length,
+                itemBuilder: (context, vi) {
+                final i = visible[vi].index;
+                final e = visible[vi].entry;
                 final selected = _selected.contains(i);
                 return ListTile(
                   selected: selected,
@@ -179,7 +253,8 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
                   },
                 );
               },
-            ),
+              );
+            }),
       bottomNavigationBar: _batchMode && _selected.isNotEmpty
           ? SafeArea(
               child: Container(
