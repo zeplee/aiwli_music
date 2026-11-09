@@ -174,19 +174,6 @@ class PlayerCore {
 
   /// 播放倍速（<1 慢放，>1 快放）。只影响音频，不影响歌词时间轴。
   double get speed => state.value.speed;
-  /// 切换 K 歌模式（消除人声）。
-  ///
-  /// 说明：这是**立体声相减**的近似实现，不是真正的音源分离。
-  /// 对人声居中、左右声道对称的歌曲效果较好；对现场版、混响重的
-  /// 或人声不在中置的曲子效果有限。UI 上应把它当"伴奏近似"而非
-  /// "专业去人声"来表述。
-  Future<void> setKaraokeMode(bool on) async {
-    if (state.value.karaokeMode == on) return;
-    state.value = state.value.copyWith(karaokeMode: on);
-    await _engine.setVocalRemoval(on);
-    AppLog.i('Player', 'K歌模式 ${on ? '开启' : '关闭'}');
-  }
-
   Future<void> setSpeed(double v) async {
     final clamped = v.clamp(0.5, 2.0);
     state.value = state.value.copyWith(speed: clamped);

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../core/ui/cover_palette.dart';
+import '../../sources/builtin/instrumental_finder.dart';
 import '../../player/models.dart';
 import 'lyrics_view.dart';
 import '../../player/player_core.dart';
@@ -324,16 +325,20 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                     icon: Icon(Icons.queue_music,
                         color: scheme.onSurfaceVariant),
                   ),
-                  // K 歌模式（人声消除）：开启后高亮，一眼可辨
+                  // K 歌：**查找官方伴奏版**并切过去。
+                  //
+                  // 原方案是立体声相减（L-R 抵消中置人声），但实测
+                  // media_kit 的音频版 mpv 编译时裁掉了 pan/bass 滤镜
+                  // （探针结果：pan 不支持、bass 不支持，只有 equalizer 可用），
+                  // 信号处理在 Android 上根本跑不起来。
+                  //
+                  // 改走「搜官方伴奏」：效果是真正的无人生混音，
+                  // 而且是音频源级别的替换，不依赖任何滤镜。
                   IconButton(
-                    tooltip: s.karaokeMode ? 'K 歌模式 · 已开启' : 'K 歌模式（去人声）',
-                    onPressed: () => core.setKaraokeMode(!s.karaokeMode),
-                    icon: Icon(
-                      Icons.mic_external_on,
-                      color: s.karaokeMode
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant,
-                    ),
+                    tooltip: 'K 歌模式（找官方伴奏）',
+                    onPressed: () => _findInstrumental(context, core, item),
+                    icon: Icon(Icons.mic_external_on,
+                        color: scheme.onSurfaceVariant),
                   ),
                   const Spacer(),
                   IconButton(
@@ -395,6 +400,59 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
 
 
   /// 1.25 → 1.25, 1.50 → 1.5, 0.75 → 0.75
+  /// 查找当前歌曲的官方伴奏并切换播放。
+  ///
+  /// 找不到时明确告知，而不是静默失败——用户需要知道"这首没有伴奏版"
+  /// 而不是以为按钮坏了。
+  Future<void> _findInstrumental(
+      BuildContext context, PlayerCore core, PlayerItem? item) async {
+    if (item == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+      content: Text('正在查找官方伴奏…'),
+      duration: Duration(seconds: 2),
+    ));
+    final found =
+        await InstrumentalFinder.find(title: item.title, artist: item.artist);
+    if (!mounted) return;
+    if (found == null) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+          content: Text('这首没有找到官方伴奏版'),
+          duration: Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ));
+      return;
+    }
+    // 用伴奏替换当前曲目（保留位置由 _loadAt 从头开始——
+    // 换的是另一条音源，进度不通用）
+    final idx = core.currentIndex;
+    final q = core.queue;
+    if (idx < 0 || idx >= q.length) return;
+    final replaced = PlayerItem(
+      title: found.title,
+      artist: found.artist,
+      sourceId: found.sourceId,
+      musicId: found.musicId,
+      album: found.album?.name,
+      artUri: (found.album?.picUrl == null || found.album!.picUrl!.isEmpty)
+          ? null
+          : Uri.tryParse(found.album!.picUrl!),
+      duration: found.duration,
+      raw: found.raw,
+    );
+    final newQueue = [...q]..[idx] = replaced;
+    await core.setQueue(newQueue, index: idx);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('已切到伴奏版：${found.title}'),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ));
+  }
+
   static String _fmtRate(double v) {
     final t = v.toStringAsFixed(2);
     if (t.endsWith('0')) return t.substring(0, t.length - 1);

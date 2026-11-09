@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:media_kit/media_kit.dart';
 
+import '../core/services/logger.dart';
 import 'audio_engine.dart';
 import 'models.dart';
 
@@ -158,22 +159,10 @@ class MediaKitEngine implements AudioEngine {
   /// 当前均衡器增益（null = 未启用）。留着以便与 K 歌模式一起重建滤镜链。
   List<double>? _eqGains;
 
-  /// K 歌模式（人声消除）开关。
-  bool _vocalRemoval = false;
-  double _bassCompDb = 3;
-
   @override
   Future<void> setEqualizer(List<double>? gainsDb) async {
     _eqGains =
         (gainsDb == null || gainsDb.every((g) => g == 0)) ? null : gainsDb;
-    await _applyAudioFilters();
-  }
-
-  @override
-  Future<void> setVocalRemoval(bool enabled,
-      {double bassCompensationDb = 3}) async {
-    _vocalRemoval = enabled;
-    _bassCompDb = bassCompensationDb;
     await _applyAudioFilters();
   }
 
@@ -186,17 +175,6 @@ class MediaKitEngine implements AudioEngine {
     if (platform is! NativePlayer) return;
     final chain = <String>[];
 
-    // ① 人声消除：立体声相减（L-R），人声在中置因而被抵消。
-    //    用 `pan` 而不是 `stereotools`：pan 是 lavfi 基础滤镜，
-    //    media_kit 各平台构建基本都带，兼容性最好。
-    if (_vocalRemoval) {
-      chain.add('pan=stereo|c0=c0-c1|c1=c1-c0');
-      // 抵消中置会把低频一起带走，补一点低音回来
-      if (_bassCompDb > 0) {
-        chain.add('bass=g=${_bassCompDb.toStringAsFixed(1)}:f=150:w=0.6');
-      }
-    }
-
     // ② 均衡器（10 段 peaking），Hz 对应 AppSettings.eqBandHz
     final gains = _eqGains;
     if (gains != null) {
@@ -207,7 +185,18 @@ class MediaKitEngine implements AudioEngine {
       }
     }
 
-    await platform.setProperty('af', chain.join(','));
+    final expr = chain.join(',');
+    await platform.setProperty('af', expr);
+    // 诊断：mpv 会**静默忽略**不认识的滤镜名。设置后读回实际生效值，
+    // 若与期望不符说明该滤镜不被这个 mpv 构建支持（真机排查去人声无效时用）。
+    try {
+      final applied = await platform.getProperty('af');
+      if (applied.trim() != expr.trim()) {
+        AppLog.w('Audio', 'af 未按期望生效: 期望="$expr" 实际="$applied"');
+      } else if (expr.isNotEmpty) {
+        AppLog.i('Audio', 'af 已生效: $expr');
+      }
+    } catch (_) {}
   }
 
   /// 网络音源的缓冲调优。
