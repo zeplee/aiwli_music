@@ -53,6 +53,12 @@ class _SearchPageState extends ConsumerState<SearchPage>
   };
   bool _catalogLoading = false;
 
+  /// 是否启用"滚到底自动加载下一页"。
+  ///
+  /// 默认关闭：自动加载会让底部的「加载更多」按钮一闪即逝，
+  /// 用户以为没有这个功能。显式按钮更可发现、也更省流量。
+  static const bool _autoLoadMore = false;
+
   /// 分类 Tab 的固定顺序（歌曲在「全部」里，不单列）。
   static const _catalogKinds = [
     SearchKind.album,
@@ -75,6 +81,10 @@ class _SearchPageState extends ConsumerState<SearchPage>
   void _maybeLoadMore(String sourceId) {
     final c = _scrollCtrls[sourceId];
     if (c == null || !c.hasClients) return;
+    // 不再自动续载：滚到底就自动加载会让"加载更多"按钮一闪而过，
+    // 用户反而以为没有这个功能（真机反馈）。
+    // 保留显式按钮由用户点击，行为更可控、也更可发现。
+    if (!_autoLoadMore) return;
     if (c.position.maxScrollExtent - c.position.pixels > 320) return;
 
     // 「全部」Tab：并发续载所有可加载源
@@ -97,6 +107,9 @@ class _SearchPageState extends ConsumerState<SearchPage>
   /// 内容不足一屏时列表不可滚动 → 滚动监听永不触发。
   /// 这里在每帧后检查：若该源仍可加载且内容未填满视口，则主动续载。
   void _fillViewportIfNeeded() {
+    // 同 _autoLoadMore：不自动续载，交给用户点按钮。
+    // 否则"内容不足一屏"时会自动补，按钮永远看不到。
+    if (!_autoLoadMore) return;
     for (final g in _groups) {
       if (!g.canLoadMore) continue;
       final c = _scrollCtrls[g.sourceId];
@@ -697,7 +710,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
         child: Center(
-          child: Text('— 已全部加载 \$_totalCount 首 —',
+          child: Text('— 已全部加载 $_totalCount 首 —',
               style: TextStyle(fontSize: 11, color: scheme.outline)),
         ),
       );
