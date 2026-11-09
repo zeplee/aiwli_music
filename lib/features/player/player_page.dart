@@ -54,9 +54,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     final scheme = Theme.of(context).colorScheme;
     final item = core.current;
     // 是否已在任一歌单中（仅用于图标状态提示，不再有"收藏"概念）
-    final inAnyPlaylist = item != null &&
-        playlists.playlists.any((p) => p.entries.any(
-            (e) => e.sourceId == item.sourceId && e.musicId == item.musicId));
+    final inAnyPlaylist =
+        item != null &&
+        playlists.playlists.any(
+          (p) => p.entries.any(
+            (e) => e.sourceId == item.sourceId && e.musicId == item.musicId,
+          ),
+        );
 
     return CallbackShortcuts(
       bindings: {
@@ -89,315 +93,420 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           // 状态栏那条没人绘制 → 露出 Scaffold 默认底色
           // （浅色主题下就是用户看到的那条白条）。
           body: ValueListenableBuilder<PlayerUiState>(
-          valueListenable: core.state,
-          builder: (context, s, _) {
-            // 错误提示分两级，避免"已在播还挂红条"的干扰：
-            //
-            //   换源中/中途 error → 不弹任何东西。界面本身已有
-            //     "正在获取播放地址…"，用户能看到它在努力。
-            //   真失败（processing=error）→ 才弹红条。
-            //
-            // 之前只要 s.error 非空就弹，而换源过程会短暂带 error，
-            // 于是换源成功后红条仍要挂满 3 秒——观感很差。
-            final isRealFailure =
-                s.error != null && s.processing == EngineProcessing.error;
-            if (isRealFailure && s.error != _lastShownError) {
-              _lastShownError = s.error;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!mounted) return;
-                final messenger = ScaffoldMessenger.maybeOf(context);
-                messenger
-                  ?..hideCurrentSnackBar()
-                  ..showSnackBar(SnackBar(
-                    // 不复述 mpv 英文原文，给用户能理解的说法
-                    content: const Text('这首歌暂时播不了，换源后仍无法播放'),
-                    duration: const Duration(seconds: 3),
-                    behavior: SnackBarBehavior.floating,
-                    backgroundColor: Theme.of(context).colorScheme.error,
-                    // floating SnackBar 默认贴底，会盖住播放控制栏
-                    // （真机截图确认：暂停按钮下半截被遮）。
-                    // 往上抬 96 让出控制行 + 安全区。
-                    margin: const EdgeInsets.fromLTRB(16, 0, 16, 96),
-                  ));
-              });
-            }
-            // 恢复播放后重置去重标记：下次真失败仍要能弹出
-            if (s.error == null && s.playing) _lastShownError = null;
-            // 封面变化 → 重新提取主色（动态主题 + 背景模糊）
-            _syncPalette(item?.artUri?.toString());
+            valueListenable: core.state,
+            builder: (context, s, _) {
+              // 错误提示分两级，避免"已在播还挂红条"的干扰：
+              //
+              //   换源中/中途 error → 不弹任何东西。界面本身已有
+              //     "正在获取播放地址…"，用户能看到它在努力。
+              //   真失败（processing=error）→ 才弹红条。
+              //
+              // 之前只要 s.error 非空就弹，而换源过程会短暂带 error，
+              // 于是换源成功后红条仍要挂满 3 秒——观感很差。
+              final isRealFailure =
+                  s.error != null && s.processing == EngineProcessing.error;
+              if (isRealFailure && s.error != _lastShownError) {
+                _lastShownError = s.error;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  final messenger = ScaffoldMessenger.maybeOf(context);
+                  messenger
+                    ?..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      SnackBar(
+                        // 不复述 mpv 英文原文，给用户能理解的说法
+                        content: const Text('这首歌暂时播不了，换源后仍无法播放'),
+                        duration: const Duration(seconds: 3),
+                        behavior: SnackBarBehavior.floating,
+                        backgroundColor: Theme.of(context).colorScheme.error,
+                        // floating SnackBar 默认贴底，会盖住播放控制栏
+                        // （真机截图确认：暂停按钮下半截被遮）。
+                        // 往上抬 96 让出控制行 + 安全区。
+                        margin: const EdgeInsets.fromLTRB(16, 0, 16, 96),
+                      ),
+                    );
+                });
+              }
+              // 恢复播放后重置去重标记：下次真失败仍要能弹出
+              if (s.error == null && s.playing) _lastShownError = null;
+              // 封面变化 → 重新提取主色（动态主题 + 背景模糊）
+              _syncPalette(item?.artUri?.toString());
 
-            final duration =
-                s.duration ?? const Duration(minutes: 3, seconds: 30);
-            final pos = s.position <= duration ? s.position : duration;
-            // 动态主题色：取到封面主色就用它，否则回退到主题默认
-            final accent = _coverColor ?? scheme.primary;
-            return Stack(
-              children: [
-                // 封面模糊背景 + 主色渐变（规格 §2.4「播放页背景」）
-                Positioned.fill(
-                  child: _CoverBackdrop(
-                    artUrl: item?.artUri?.toString(),
-                    accent: accent,
-                  ),
-                ),
-                // 内容区才需要避让状态栏/刘海；背景层已经铺满全屏
-                SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(children: [
-                Row(children: [
-                  IconButton(
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    icon: const Icon(Icons.keyboard_arrow_down, size: 30),
-                  ),
-                  const Spacer(),
-                  // 播放队列已移到底部左下角（顶栏留给低频操作）。
-                  //
-                  // 定时关闭：**只在激活时出现在顶栏**（对齐参考工程）。
-                  // 平时不占位——它一周用不了几次，常驻只是噪音；
-                  // 一旦开启就必须显眼，否则用户不知道几点会停。
-                  if (sleep.active)
-                    IconButton(
-                      tooltip: '定时关闭 · 剩余 ${_fmt(sleep.remaining)}',
-                      onPressed: () => showSleepTimerSheet(context),
-                      icon: Icon(Icons.bedtime,
-                          size: 20, color: scheme.primary),
-                    ),
-                  // 倍速已移入封面操作菜单（与「切换播放音质」并列）。
-                  //
-                  // 理由：顶栏原本有 倍速/更多/添加歌单 三个元素，
-                  // 倍速那个 61x33 的文字按钮夹在 48dp 图标中间最难命中；
-                  // 而参考工程把同类操作（音质）都收在封面菜单里。
-                  // 唯一代价是「1.5x 常显」没了——但非 1x 时封面菜单里
-                  // 会写「当前 1.50x」，且播放页进度条不受影响。
-                  if (s.speed != 1.0)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: Text('${_fmtRate(s.speed)}x',
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: scheme.primary)),
-                    ),
-                  // 其余低频操作收进「更多」，避免顶栏 6 个图标挤成一排
-                  PopupMenuButton<String>(
-                    tooltip: '更多',
-                    icon: Icon(Icons.more_horiz,
-                        color: scheme.onSurfaceVariant),
-                    onSelected: (v) {
-                      switch (v) {
-                        case 'sleep':
-                          showSleepTimerSheet(context);
-                        case 'eq':
-                          showEqSheet(context);
-                        case 'quality':
-                          showQualitySheet(context);
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'sleep',
-                        child: Row(children: [
-                          Icon(Icons.bedtime_outlined,
-                              size: 18,
-                              color: sleep.active
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant),
-                          const SizedBox(width: 10),
-                          Text(sleep.active ? '定时关闭 · 已开启' : '定时关闭'),
-                        ]),
-                      ),
-                      PopupMenuItem(
-                        value: 'eq',
-                        child: Row(children: [
-                          Icon(Icons.equalizer,
-                              size: 18,
-                              color: settings.eqEnabled
-                                  ? scheme.primary
-                                  : scheme.onSurfaceVariant),
-                          const SizedBox(width: 10),
-                          Text(settings.eqEnabled ? '均衡器 · 已开启' : '均衡器'),
-                        ]),
-                      ),
-                      PopupMenuItem(
-                        value: 'quality',
-                        child: Row(children: [
-                          Icon(Icons.high_quality,
-                              size: 18, color: scheme.primary),
-                          const SizedBox(width: 10),
-                          Text('音质：${settings.quality.label}'),
-                        ]),
-                      ),
-                    ],
-                  ),
-                  // 「添加到歌单」（取代原爱心按钮）。
-                  // lx 与栖弦都没有"收藏"这个概念，只有歌单；
-                  // 若已在任一歌单里，图标高亮提示。
-                  IconButton(
-                    tooltip: '添加到歌单',
-                    onPressed: item == null
-                        ? null
-                        : () => showAddToPlaylistSheet(context, ref, item.toEntry()),
-                    icon: Icon(
-                      inAnyPlaylist
-                          ? Icons.playlist_add_check
-                          : Icons.playlist_add,
-                      color: inAnyPlaylist
-                          ? scheme.primary
-                          : scheme.onSurfaceVariant,
+              final duration =
+                  s.duration ?? const Duration(minutes: 3, seconds: 30);
+              final pos = s.position <= duration ? s.position : duration;
+              // 动态主题色：取到封面主色就用它，否则回退到主题默认
+              final accent = _coverColor ?? scheme.primary;
+              return Stack(
+                children: [
+                  // 封面模糊背景 + 主色渐变（规格 §2.4「播放页背景」）
+                  Positioned.fill(
+                    child: _CoverBackdrop(
+                      artUrl: item?.artUri?.toString(),
+                      accent: accent,
                     ),
                   ),
-                ]),
-                const SizedBox(height: 4),
-                // 标题/歌手贴顶（不再挤在 Tab 中间浪费视觉空间）
-                Text(s.title.isEmpty ? '未在播放' : s.title,
-                    style: Theme.of(context).textTheme.titleLarge,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 2),
-                Text(s.artist,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                // 上半区：窄屏=三页滑动；宽屏(>900)=左封面 + 右歌词/评论分栏
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, c) {
-                      if (c.maxWidth <= 900) {
-                        return _PlayerTabs(item: item);
-                      }
-                      return Row(
+                  // 内容区才需要避让状态栏/刘海；背景层已经铺满全屏
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
                         children: [
-                          Expanded(
-                            flex: 4,
-                            child: _WideCoverPane(item: item),
+                          Row(
+                            children: [
+                              IconButton(
+                                onPressed: () =>
+                                    Navigator.of(context).maybePop(),
+                                icon: const Icon(
+                                  Icons.keyboard_arrow_down,
+                                  size: 30,
+                                ),
+                              ),
+                              const Spacer(),
+                              // 播放队列已移到底部左下角（顶栏留给低频操作）。
+                              //
+                              // 定时关闭：**只在激活时出现在顶栏**（对齐参考工程）。
+                              // 平时不占位——它一周用不了几次，常驻只是噪音；
+                              // 一旦开启就必须显眼，否则用户不知道几点会停。
+                              if (sleep.active)
+                                IconButton(
+                                  tooltip: '定时关闭 · 剩余 ${_fmt(sleep.remaining)}',
+                                  onPressed: () => showSleepTimerSheet(context),
+                                  icon: Icon(
+                                    Icons.bedtime,
+                                    size: 20,
+                                    color: scheme.primary,
+                                  ),
+                                ),
+                              // 倍速已移入封面操作菜单（与「切换播放音质」并列）。
+                              //
+                              // 理由：顶栏原本有 倍速/更多/添加歌单 三个元素，
+                              // 倍速那个 61x33 的文字按钮夹在 48dp 图标中间最难命中；
+                              // 而参考工程把同类操作（音质）都收在封面菜单里。
+                              // 唯一代价是「1.5x 常显」没了——但非 1x 时封面菜单里
+                              // 会写「当前 1.50x」，且播放页进度条不受影响。
+                              if (s.speed != 1.0)
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                  ),
+                                  child: Text(
+                                    '${_fmtRate(s.speed)}x',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: scheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              // 其余低频操作收进「更多」，避免顶栏 6 个图标挤成一排
+                              PopupMenuButton<String>(
+                                tooltip: '更多',
+                                icon: Icon(
+                                  Icons.more_horiz,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                                onSelected: (v) {
+                                  switch (v) {
+                                    case 'sleep':
+                                      showSleepTimerSheet(context);
+                                    case 'eq':
+                                      showEqSheet(context);
+                                    case 'quality':
+                                      showQualitySheet(context);
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  PopupMenuItem(
+                                    value: 'sleep',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.bedtime_outlined,
+                                          size: 18,
+                                          color: sleep.active
+                                              ? scheme.primary
+                                              : scheme.onSurfaceVariant,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          sleep.active ? '定时关闭 · 已开启' : '定时关闭',
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'eq',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.equalizer,
+                                          size: 18,
+                                          color: settings.eqEnabled
+                                              ? scheme.primary
+                                              : scheme.onSurfaceVariant,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text(
+                                          settings.eqEnabled
+                                              ? '均衡器 · 已开启'
+                                              : '均衡器',
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'quality',
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.high_quality,
+                                          size: 18,
+                                          color: scheme.primary,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Text('音质：${settings.quality.label}'),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              // 「添加到歌单」（取代原爱心按钮）。
+                              // lx 与栖弦都没有"收藏"这个概念，只有歌单；
+                              // 若已在任一歌单里，图标高亮提示。
+                              IconButton(
+                                tooltip: '添加到歌单',
+                                onPressed: item == null
+                                    ? null
+                                    : () => showAddToPlaylistSheet(
+                                        context,
+                                        ref,
+                                        item.toEntry(),
+                                      ),
+                                icon: Icon(
+                                  inAnyPlaylist
+                                      ? Icons.playlist_add_check
+                                      : Icons.playlist_add,
+                                  color: inAnyPlaylist
+                                      ? scheme.primary
+                                      : scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
                           ),
-                          const VerticalDivider(width: 24),
+                          const SizedBox(height: 4),
+                          // 标题/歌手贴顶（不再挤在 Tab 中间浪费视觉空间）
+                          Text(
+                            s.title.isEmpty ? '未在播放' : s.title,
+                            style: Theme.of(context).textTheme.titleLarge,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            s.artist,
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          // 上半区：窄屏=三页滑动；宽屏(>900)=左封面 + 右歌词/评论分栏
                           Expanded(
-                            flex: 5,
-                            child: _PlayerTabs(
-                              item: item,
-                              wideMode: true,
+                            child: LayoutBuilder(
+                              builder: (context, c) {
+                                if (c.maxWidth <= 900) {
+                                  return _PlayerTabs(item: item);
+                                }
+                                return Row(
+                                  children: [
+                                    Expanded(
+                                      flex: 4,
+                                      child: _WideCoverPane(item: item),
+                                    ),
+                                    const VerticalDivider(width: 24),
+                                    Expanded(
+                                      flex: 5,
+                                      child: _PlayerTabs(
+                                        item: item,
+                                        wideMode: true,
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
                             ),
                           ),
-                        ],
-                      );
-                    },
-                  ),
-                ),
-                _SeekBar(
-                  position: pos,
-                  duration: duration,
-                  // 缓冲进度来自引擎快照（media_kit buffer 流）
-                  buffered: s.buffered,
-                  enabled: s.processing != EngineProcessing.loading &&
-                      s.processing != EngineProcessing.buffering,
-                  onChanged: (v) =>
-                      core.seek(Duration(milliseconds: v.round())),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(_fmt(pos),
-                        style: TextStyle(
-                            color: scheme.onSurfaceVariant, fontSize: 12)),
-                    Text(_fmt(duration),
-                        style: TextStyle(
-                            color: scheme.onSurfaceVariant, fontSize: 12)),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                // 底部控制区：中间放走带控制，两端放「队列」和「播放模式」。
-                //
-                // 布局调整（用户反馈）：
-                //   · 「顺序/单曲/随机」原是**两个独立按钮**分居左右下角，
-                //     中间夹着上一曲/暂停/下一曲——手指从中心往外够，
-                //     命中率低。现在合并成一个三态按钮，放右下角。
-                //   · 「播放队列」原在顶栏右侧，是最高频的入口却离拇指最远。
-                //     移到底部左下角。
-                Row(children: [
-                  // 左侧放低频但有价值的两个开关：队列 / K 歌模式。
-                  // 都是"整首歌期间可能想切一下"的操作，比顶栏更顺手。
-                  IconButton(
-                    tooltip: '播放队列',
-                    onPressed: () => showQueueSheet(context),
-                    icon: Icon(Icons.queue_music,
-                        color: scheme.onSurfaceVariant),
-                  ),
-                  // K 歌：**查找官方伴奏版**并切过去。
-                  //
-                  // 原方案是立体声相减（L-R 抵消中置人声），但实测
-                  // media_kit 的音频版 mpv 编译时裁掉了 pan/bass 滤镜
-                  // （探针结果：pan 不支持、bass 不支持，只有 equalizer 可用），
-                  // 信号处理在 Android 上根本跑不起来。
-                  //
-                  // 改走「搜官方伴奏」：效果是真正的无人生混音，
-                  // 而且是音频源级别的替换，不依赖任何滤镜。
-                  IconButton(
-                    tooltip: 'K 歌模式（找官方伴奏）',
-                    onPressed: () => _findInstrumental(context, core, item),
-                    icon: Icon(Icons.mic_external_on,
-                        color: scheme.onSurfaceVariant),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                      onPressed: core.previous,
-                      icon: const Icon(Icons.skip_previous, size: 36)),
-                  _PlayPauseButton(playing: s.playing),
-                  IconButton(
-                      onPressed: () => core.next(),
-                      icon: const Icon(Icons.skip_next, size: 36)),
-                  const Spacer(),
-                  // 右：播放模式三态切换
-                  _PlayModeButton(
-                    mode: PlayModeX.from(
-                        repeat: s.repeatMode, shuffle: s.shuffleOn),
-                    onTap: () {
-                      final next = PlayModeX.from(
-                              repeat: s.repeatMode, shuffle: s.shuffleOn)
-                          .next;
-                      core.setRepeat(next.repeatMode);
-                      core.setShuffle(next.shuffleOn);
-                    },
-                  ),
-                ]),
-                // 加载提示：固定高度占位，出现/消失不推挤布局
-                // （之前是条件插入 Row，导致整个页面上下伸缩）
-                SizedBox(
-                  height: 24,
-                  child: (s.processing == EngineProcessing.loading ||
-                          s.processing == EngineProcessing.buffering)
-                      ? Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: scheme.primary),
-                            ),
-                            const SizedBox(width: 8),
-                            Text('正在获取播放地址…',
+                          _SeekBar(
+                            position: pos,
+                            duration: duration,
+                            // 缓冲进度来自引擎快照（media_kit buffer 流）
+                            buffered: s.buffered,
+                            enabled:
+                                s.processing != EngineProcessing.loading &&
+                                s.processing != EngineProcessing.buffering,
+                            onChanged: (v) =>
+                                core.seek(Duration(milliseconds: v.round())),
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _fmt(pos),
                                 style: TextStyle(
-                                    color: scheme.primary, fontSize: 12)),
-                          ],
-                        )
-                      : null,
-                ),
-                const SizedBox(height: 4),
-                    ]),
+                                  color: scheme.onSurfaceVariant,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                _fmt(duration),
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          // 底部控制区：中间放走带控制，两端放「队列」和「播放模式」。
+                          //
+                          // 布局调整（用户反馈）：
+                          //   · 「顺序/单曲/随机」原是**两个独立按钮**分居左右下角，
+                          //     中间夹着上一曲/暂停/下一曲——手指从中心往外够，
+                          //     命中率低。现在合并成一个三态按钮，放右下角。
+                          //   · 「播放队列」原在顶栏右侧，是最高频的入口却离拇指最远。
+                          //     移到底部左下角。
+                          // 左/右两侧各用一个 Expanded 占**等宽**空间。
+                          //
+                          // 不能再用 `Spacer`：左侧是队列+K歌两个按钮（96dp），
+                          // 右侧只有播放模式一个（48dp），Spacer 只按剩余空间均分，
+                          // 结果中间的播放键被推得偏左（真机反馈：播放按钮不居中）。
+                          // 两个 Expanded 平分剩余宽度才能让走带区严格居中。
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.start,
+                                  children: [
+                                    // 左侧放低频但有价值的两个开关：队列 / K 歌模式。
+                                    // 都是"整首歌期间可能想切一下"的操作，比顶栏更顺手。
+                                    IconButton(
+                                      tooltip: '播放队列',
+                                      onPressed: () => showQueueSheet(context),
+                                      icon: Icon(
+                                        Icons.queue_music,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                    // K 歌：**查找官方伴奏版**并切过去。
+                                    //
+                                    // 原方案是立体声相减（L-R 抵消中置人声），但实测
+                                    // media_kit 的音频版 mpv 编译时裁掉了 pan/bass 滤镜
+                                    // （探针结果：pan 不支持、bass 不支持，只有 equalizer 可用），
+                                    // 信号处理在 Android 上根本跑不起来。
+                                    //
+                                    // 改走「搜官方伴奏」：效果是真正的无人生混音，
+                                    // 而且是音频源级别的替换，不依赖任何滤镜。
+                                    IconButton(
+                                      tooltip: 'K 歌模式（找官方伴奏）',
+                                      onPressed: () => _findInstrumental(
+                                        context,
+                                        core,
+                                        item,
+                                      ),
+                                      icon: Icon(
+                                        Icons.mic_external_on,
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // 中间走带区：mainAxisSize.min，不参与伸缩，永远居中
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    onPressed: core.previous,
+                                    icon: const Icon(
+                                      Icons.skip_previous,
+                                      size: 36,
+                                    ),
+                                  ),
+                                  _PlayPauseButton(playing: s.playing),
+                                  IconButton(
+                                    onPressed: () => core.next(),
+                                    icon: const Icon(Icons.skip_next, size: 36),
+                                  ),
+                                ],
+                              ),
+                              Expanded(
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    // 右：播放模式三态切换
+                                    _PlayModeButton(
+                                      mode: PlayModeX.from(
+                                        repeat: s.repeatMode,
+                                        shuffle: s.shuffleOn,
+                                      ),
+                                      onTap: () {
+                                        final next = PlayModeX.from(
+                                          repeat: s.repeatMode,
+                                          shuffle: s.shuffleOn,
+                                        ).next;
+                                        core.setRepeat(next.repeatMode);
+                                        core.setShuffle(next.shuffleOn);
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          // 加载提示：固定高度占位，出现/消失不推挤布局
+                          // （之前是条件插入 Row，导致整个页面上下伸缩）
+                          SizedBox(
+                            height: 24,
+                            child:
+                                (s.processing == EngineProcessing.loading ||
+                                    s.processing == EngineProcessing.buffering)
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: 12,
+                                        height: 12,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: scheme.primary,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '正在获取播放地址…',
+                                        style: TextStyle(
+                                          color: scheme.primary,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : null,
+                          ),
+                          const SizedBox(height: 4),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ],
-            );
-          },
+                ],
+              );
+            },
+          ),
         ),
-      ),
       ),
     );
   }
-
 
   /// 1.25 → 1.25, 1.50 → 1.5, 0.75 → 0.75
   /// 查找当前歌曲的官方伴奏并切换播放。
@@ -405,24 +514,33 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   /// 找不到时明确告知，而不是静默失败——用户需要知道"这首没有伴奏版"
   /// 而不是以为按钮坏了。
   Future<void> _findInstrumental(
-      BuildContext context, PlayerCore core, PlayerItem? item) async {
+    BuildContext context,
+    PlayerCore core,
+    PlayerItem? item,
+  ) async {
     if (item == null) return;
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(
-      content: Text('正在查找官方伴奏…'),
-      duration: Duration(seconds: 2),
-    ));
-    final found =
-        await InstrumentalFinder.find(title: item.title, artist: item.artist);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('正在查找官方伴奏…'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+    final found = await InstrumentalFinder.find(
+      title: item.title,
+      artist: item.artist,
+    );
     if (!mounted) return;
     if (found == null) {
       messenger
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(
-          content: Text('这首没有找到官方伴奏版'),
-          duration: Duration(seconds: 3),
-          behavior: SnackBarBehavior.floating,
-        ));
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('这首没有找到官方伴奏版'),
+            duration: Duration(seconds: 3),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
       return;
     }
     // 用伴奏替换当前曲目（保留位置由 _loadAt 从头开始——
@@ -446,11 +564,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     await core.setQueue(newQueue, index: idx);
     messenger
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text('已切到伴奏版：${found.title}'),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ));
+      ..showSnackBar(
+        SnackBar(
+          content: Text('已切到伴奏版：${found.title}'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   static String _fmtRate(double v) {
@@ -511,7 +631,9 @@ class _PlayPauseButton extends ConsumerWidget {
         width: 72,
         height: 72,
         decoration: BoxDecoration(
-            shape: BoxShape.circle, color: Theme.of(context).colorScheme.primary),
+          shape: BoxShape.circle,
+          color: Theme.of(context).colorScheme.primary,
+        ),
         child: Icon(
           playing ? Icons.pause : Icons.play_arrow,
           size: 40,
@@ -565,8 +687,10 @@ class _SeekBarState extends State<_SeekBar> {
           child: dragging
               ? Center(
                   child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: scheme.primaryContainer,
                       borderRadius: BorderRadius.circular(10),
@@ -574,9 +698,10 @@ class _SeekBarState extends State<_SeekBar> {
                     child: Text(
                       _fmt(Duration(milliseconds: _dragValue!.round())),
                       style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: scheme.onPrimaryContainer),
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: scheme.onPrimaryContainer,
+                      ),
                     ),
                   ),
                 )
@@ -607,8 +732,7 @@ class _SeekBarState extends State<_SeekBar> {
               // 缓冲进度：与轨道同宽，避免两套宽度错位
               if (bufferedRatio > 0.001)
                 Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: _thumbRadius),
+                  padding: const EdgeInsets.symmetric(horizontal: _thumbRadius),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(2),
                     child: LinearProgressIndicator(
@@ -616,7 +740,8 @@ class _SeekBarState extends State<_SeekBar> {
                       minHeight: 3,
                       backgroundColor: Colors.transparent,
                       valueColor: AlwaysStoppedAnimation(
-                          scheme.onSurface.withValues(alpha: 0.22)),
+                        scheme.onSurface.withValues(alpha: 0.22),
+                      ),
                     ),
                   ),
                 ),
@@ -695,33 +820,40 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
             const _CommentsPage(),
           ];
     return SizedBox.expand(
-      child: Column(children: [
-        Expanded(
-          child: PageView(
-            controller: _controller,
-            onPageChanged: (i) => setState(() {
-              // 页数可能因宽屏切换而变化，夹住避免指示点越界
-              _index = i.clamp(0, pages.length - 1);
-            }),
-            children: pages,
-          ),
-        ),
-        const SizedBox(height: 10),
-        // 页面指示点
-        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          for (var i = 0; i < pages.length; i++)
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              width: _index == i ? 18 : 6,
-              height: 6,
-              decoration: BoxDecoration(
-                color: _index == i ? scheme.primary : scheme.onSurfaceVariant,
-                borderRadius: BorderRadius.circular(3),
-              ),
+      child: Column(
+        children: [
+          Expanded(
+            child: PageView(
+              controller: _controller,
+              onPageChanged: (i) => setState(() {
+                // 页数可能因宽屏切换而变化，夹住避免指示点越界
+                _index = i.clamp(0, pages.length - 1);
+              }),
+              children: pages,
             ),
-        ]),
-      ]),
+          ),
+          const SizedBox(height: 10),
+          // 页面指示点
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < pages.length; i++)
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: _index == i ? 18 : 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: _index == i
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -733,10 +865,12 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
       onTap: item == null
           ? null
           : () => _showCoverActions(context, ref, item, () {
-                _controller.animateToPage(1,
-                    duration: const Duration(milliseconds: 300),
-                    curve: Curves.easeOut);
-              }),
+              _controller.animateToPage(
+                1,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }),
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
@@ -744,11 +878,7 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              scheme.primary,
-              const Color(0xFF8B5CF6),
-              scheme.tertiary,
-            ],
+            colors: [scheme.primary, const Color(0xFF8B5CF6), scheme.tertiary],
           ),
         ),
         child: (item?.artBytes?.isNotEmpty ?? false)
@@ -758,24 +888,31 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
                   item!.artBytes!,
                   fit: BoxFit.cover,
                   gaplessPlayback: true,
-                  errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
-                      size: 60,
-                      color: Colors.white.withValues(alpha: 0.85)),
+                  errorBuilder: (_, _, _) => Icon(
+                    Icons.graphic_eq,
+                    size: 60,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
                 ),
               )
             : item?.artUri != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
-                    child: Image.network(
-                      item!.artUri.toString(),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
-                          size: 60,
-                          color: Colors.white.withValues(alpha: 0.85)),
-                    ),
-                  )
-                : Icon(Icons.graphic_eq,
-                    size: 60, color: Colors.white.withValues(alpha: 0.85)),
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Image.network(
+                  item!.artUri.toString(),
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Icon(
+                    Icons.graphic_eq,
+                    size: 60,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
+                ),
+              )
+            : Icon(
+                Icons.graphic_eq,
+                size: 60,
+                color: Colors.white.withValues(alpha: 0.85),
+              ),
       ),
     );
   }
@@ -783,98 +920,114 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
 
 /// 封面操作菜单：添加到歌单 / 下载 / 切换音质 / 跳到歌词页。
 /// 对齐参考工程动作集（playlist_add / download / high_quality / subtitles）。
-Future<void> _showCoverActions(BuildContext context, WidgetRef ref,
-    PlayerItem item, VoidCallback onOpenLyrics) async {
+Future<void> _showCoverActions(
+  BuildContext context,
+  WidgetRef ref,
+  PlayerItem item,
+  VoidCallback onOpenLyrics,
+) async {
   await showModalBottomSheet<void>(
     context: context,
     builder: (ctx) {
       final scheme = Theme.of(ctx).colorScheme;
       return SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item.title,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600)),
-                Text(item.artist,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    item.artist,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                        fontSize: 12, color: scheme.onSurfaceVariant)),
-              ],
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.playlist_add),
-            title: const Text('添加到歌单'),
-            subtitle: const Text('选择歌单并加入当前歌曲'),
-            onTap: () {
-              Navigator.of(ctx).pop();
-              showAddToPlaylistSheet(
-                context,
-                ref,
-                PlaylistEntry(
-                  sourceId: item.sourceId,
-                  musicId: item.musicId,
-                  title: item.title,
-                  artist: item.artist,
-                  album: item.album,
-                  durationMs: item.duration?.inMilliseconds,
-                  rawJson: item.raw == null
-                      ? null
-                      : jsonEncode(item.raw!.cast<String, Object?>()),
-                ),
-              );
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.download),
-            title: const Text('下载当前歌曲'),
-            subtitle: Text(item.sourceId == 'local'
-                ? '本地歌曲无需下载'
-                : '选择音质并下载当前在线歌曲'),
-            enabled: item.sourceId != 'local',
-            onTap: () {
-              Navigator.of(ctx).pop();
-              ref.read(downloadManagerProvider).start(item);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.high_quality),
-            title: const Text('切换播放音质'),
-            onTap: () {
-              Navigator.of(ctx).pop();
-              showQualitySheet(context);
-            },
-          ),
-          // 播放速度也放进封面菜单（参考工程把音质放这里，我们多了倍速
-          // 这个差异功能）。顶栏因此可以少一个元素。
-          ListTile(
-            leading: const Icon(Icons.speed),
-            title: const Text('播放速度'),
-            subtitle: Text(
-                '当前 ${ref.read(playerCoreProvider).state.value.speed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '')}x'),
-            onTap: () {
-              Navigator.of(ctx).pop();
-              showSpeedSheet(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.lyrics_outlined),
-            title: const Text('查看歌词'),
-            onTap: () {
-              Navigator.of(ctx).pop();
-              onOpenLyrics();
-            },
-          ),
-          const SizedBox(height: 8),
-        ]),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.playlist_add),
+              title: const Text('添加到歌单'),
+              subtitle: const Text('选择歌单并加入当前歌曲'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                showAddToPlaylistSheet(
+                  context,
+                  ref,
+                  PlaylistEntry(
+                    sourceId: item.sourceId,
+                    musicId: item.musicId,
+                    title: item.title,
+                    artist: item.artist,
+                    album: item.album,
+                    durationMs: item.duration?.inMilliseconds,
+                    rawJson: item.raw == null
+                        ? null
+                        : jsonEncode(item.raw!.cast<String, Object?>()),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.download),
+              title: const Text('下载当前歌曲'),
+              subtitle: Text(
+                item.sourceId == 'local' ? '本地歌曲无需下载' : '选择音质并下载当前在线歌曲',
+              ),
+              enabled: item.sourceId != 'local',
+              onTap: () {
+                Navigator.of(ctx).pop();
+                ref.read(downloadManagerProvider).start(item);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.high_quality),
+              title: const Text('切换播放音质'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                showQualitySheet(context);
+              },
+            ),
+            // 播放速度也放进封面菜单（参考工程把音质放这里，我们多了倍速
+            // 这个差异功能）。顶栏因此可以少一个元素。
+            ListTile(
+              leading: const Icon(Icons.speed),
+              title: const Text('播放速度'),
+              subtitle: Text(
+                '当前 ${ref.read(playerCoreProvider).state.value.speed.toStringAsFixed(2).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '')}x',
+              ),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                showSpeedSheet(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.lyrics_outlined),
+              title: const Text('查看歌词'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onOpenLyrics();
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       );
     },
   );
@@ -902,9 +1055,14 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
         _key = k;
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            ref.read(commentServiceProvider).fetchFor(
-                  item.sourceId, item.musicId,
-                  title: item.title, artist: item.artist);
+            ref
+                .read(commentServiceProvider)
+                .fetchFor(
+                  item.sourceId,
+                  item.musicId,
+                  title: item.title,
+                  artist: item.artist,
+                );
           }
         });
       }
@@ -914,27 +1072,41 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
     Widget body;
     if (state.loading) {
       body = Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2)),
-          const SizedBox(height: 10),
-          Text('评论加载中…',
-              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
-        ]),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '评论加载中…',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
       );
     } else if (state.items.isEmpty) {
       body = Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(Icons.chat_bubble_outline,
-              size: 36, color: scheme.onSurfaceVariant),
-          const SizedBox(height: 8),
-          Text(state.error == null || state.error!.isEmpty
-              ? '暂无评论'
-              : '评论加载失败 · 换个音源试试',
-              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.chat_bubble_outline,
+              size: 36,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              state.error == null || state.error!.isEmpty
+                  ? '暂无评论'
+                  : '评论加载失败 · 换个音源试试',
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
       );
     } else {
       body = ListView.separated(
@@ -946,31 +1118,44 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(children: [
-                CircleAvatar(
-                  radius: 11,
-                  backgroundColor: scheme.primaryContainer,
-                  child: Text(c.user.isEmpty ? '?' : c.user.characters.first,
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 11,
+                    backgroundColor: scheme.primaryContainer,
+                    child: Text(
+                      c.user.isEmpty ? '?' : c.user.characters.first,
                       style: TextStyle(
-                          fontSize: 11, color: scheme.onPrimaryContainer)),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(c.user,
+                        fontSize: 11,
+                        color: scheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      c.user,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: 11,
-                          color: scheme.onSurfaceVariant)),
-                ),
-                Icon(Icons.favorite, size: 11, color: scheme.outline),
-                const SizedBox(width: 3),
-                Text('${c.likedCount}',
-                    style: TextStyle(fontSize: 11, color: scheme.outline)),
-              ]),
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.favorite, size: 11, color: scheme.outline),
+                  const SizedBox(width: 3),
+                  Text(
+                    '${c.likedCount}',
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+                ],
+              ),
               const SizedBox(height: 4),
-              Text(c.content,
-                  style: const TextStyle(fontSize: 13, height: 1.35)),
+              Text(
+                c.content,
+                style: const TextStyle(fontSize: 13, height: 1.35),
+              ),
             ],
           );
         },
@@ -979,8 +1164,9 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
     return ClipRRect(
       borderRadius: const BorderRadius.all(Radius.circular(20)),
       child: Container(
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
-          child: body),
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
+        child: body,
+      ),
     );
   }
 }
@@ -1008,7 +1194,11 @@ class _WideCoverPane extends ConsumerWidget {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [scheme.primary, const Color(0xFF8B5CF6), scheme.tertiary],
+                colors: [
+                  scheme.primary,
+                  const Color(0xFF8B5CF6),
+                  scheme.tertiary,
+                ],
               ),
             ),
             child: (item?.artBytes?.isNotEmpty ?? false)
@@ -1018,25 +1208,31 @@ class _WideCoverPane extends ConsumerWidget {
                       item!.artBytes!,
                       fit: BoxFit.cover,
                       gaplessPlayback: true,
-                      errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
-                          size: 72,
-                          color: Colors.white.withValues(alpha: 0.85)),
+                      errorBuilder: (_, _, _) => Icon(
+                        Icons.graphic_eq,
+                        size: 72,
+                        color: Colors.white.withValues(alpha: 0.85),
+                      ),
                     ),
                   )
                 : art != null
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(24),
-                        child: Image.network(
-                          art.toString(),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => Icon(Icons.graphic_eq,
-                              size: 72,
-                              color: Colors.white.withValues(alpha: 0.85)),
-                        ),
-                      )
-                    : Icon(Icons.graphic_eq,
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(24),
+                    child: Image.network(
+                      art.toString(),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Icon(
+                        Icons.graphic_eq,
                         size: 72,
-                        color: Colors.white.withValues(alpha: 0.85)),
+                        color: Colors.white.withValues(alpha: 0.85),
+                      ),
+                    ),
+                  )
+                : Icon(
+                    Icons.graphic_eq,
+                    size: 72,
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
           ),
         ),
       ),
@@ -1076,7 +1272,10 @@ class _CoverBackdrop extends StatelessWidget {
         if (hasArt)
           ImageFiltered(
             imageFilter: ImageFilter.blur(
-                sigmaX: 64, sigmaY: 64, tileMode: TileMode.decal),
+              sigmaX: 64,
+              sigmaY: 64,
+              tileMode: TileMode.decal,
+            ),
             child: Image.network(
               artUrl!,
               fit: BoxFit.cover,
@@ -1092,10 +1291,7 @@ class _CoverBackdrop extends StatelessWidget {
             gradient: RadialGradient(
               center: const Alignment(-0.7, -0.8),
               radius: 1.5,
-              colors: [
-                accent.withValues(alpha: 0.34),
-                Colors.transparent,
-              ],
+              colors: [accent.withValues(alpha: 0.34), Colors.transparent],
             ),
           ),
         ),
@@ -1137,7 +1333,6 @@ class _CoverBackdrop extends StatelessWidget {
     );
   }
 }
-
 
 /// 播放页背景「可读性遮罩」的三档不透明度。
 ///
@@ -1183,14 +1378,12 @@ class PlayerBackdropVeil {
   }
 }
 
-
 /// 铺满整行的滑轨：左右各让出半个 thumb 半径，
 /// 使「滑块圆心」在 value=0 / value=max 时正好贴到两端。
 ///
 /// Flutter 默认的 RoundedRectSliderTrackShape 会把轨道两端再内缩，
 /// 加上 Slider 默认 padding，结果就是拖不到 0（真机反馈）。
-class _FullWidthTrackShape extends SliderTrackShape
-    with BaseSliderTrackShape {
+class _FullWidthTrackShape extends SliderTrackShape with BaseSliderTrackShape {
   const _FullWidthTrackShape();
 
   @override
@@ -1217,17 +1410,30 @@ class _FullWidthTrackShape extends SliderTrackShape
     final radius = Radius.circular(rect.height / 2);
 
     // 已播放部分：从左端到滑块圆心
-    final active = Rect.fromLTRB(rect.left, rect.top, thumbCenter.dx, rect.bottom);
+    final active = Rect.fromLTRB(
+      rect.left,
+      rect.top,
+      thumbCenter.dx,
+      rect.bottom,
+    );
     // 未播放部分：从滑块圆心到右端
-    final inactive =
-        Rect.fromLTRB(thumbCenter.dx, rect.top, rect.right, rect.bottom);
+    final inactive = Rect.fromLTRB(
+      thumbCenter.dx,
+      rect.top,
+      rect.right,
+      rect.bottom,
+    );
 
     final paintActive = Paint()..color = sliderTheme.activeTrackColor!;
     final paintInactive = Paint()..color = sliderTheme.inactiveTrackColor!;
 
     context.canvas.drawRRect(
-        RRect.fromRectAndRadius(active, radius), paintActive);
+      RRect.fromRectAndRadius(active, radius),
+      paintActive,
+    );
     context.canvas.drawRRect(
-        RRect.fromRectAndRadius(inactive, radius), paintInactive);
+      RRect.fromRectAndRadius(inactive, radius),
+      paintInactive,
+    );
   }
 }
