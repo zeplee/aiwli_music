@@ -9,6 +9,7 @@ import '../../../core/models/music.dart';
 import '../../../core/models/quality.dart';
 import '../../../player/player_core.dart';
 import '../../../sources/builtin/builtin_search.dart';
+import '../../../sources/builtin/catalog_sdk.dart';
 import '../../../sources/lx/lx_source.dart';
 import '../../../sources/registry.dart';
 import '../player/player_page.dart';
@@ -40,6 +41,24 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
   /// 当前选中的 Tab（默认「全部」）。
   int _tabIndex = 0;
+
+  /// 分类搜索结果（专辑/歌单/艺人）。
+  ///
+  /// 只做网易 + 酷我：实测这两家的分类接口今天仍可用；QQ/酷狗/咪咕的
+  /// 需要 App 端签名或已下线。歌曲结果仍走 BuiltinSearch（五平台）。
+  final Map<SearchKind, List<CatalogHit>> _catalog = {
+    SearchKind.album: [],
+    SearchKind.playlist: [],
+    SearchKind.artist: [],
+  };
+  bool _catalogLoading = false;
+
+  /// 分类 Tab 的固定顺序（歌曲在「全部」里，不单列）。
+  static const _catalogKinds = [
+    SearchKind.album,
+    SearchKind.playlist,
+    SearchKind.artist,
+  ];
 
   TabController? _tabs;
 
@@ -126,6 +145,40 @@ class _SearchPageState extends ConsumerState<SearchPage>
     super.dispose();
   }
 
+  /// 拉分类结果（专辑 / 歌单 / 艺人）。
+  ///
+  /// 两平台并发；单平台失败不影响另一个（各自 try 在 CatalogSdk 内）。
+  Future<void> _loadCatalog(String kw, int gen) async {
+    final results = await Future.wait([
+      for (final k in _catalogKinds)
+        CatalogSdk.search(kind: k, keyword: kw, source: 'wy'),
+      for (final k in _catalogKinds)
+        CatalogSdk.search(kind: k, keyword: kw, source: 'kw'),
+    ]);
+    if (!mounted || gen != _generation) return;
+    final merged = <SearchKind, List<CatalogHit>>{
+      for (final k in _catalogKinds) k: [],
+    };
+    for (var i = 0; i < _catalogKinds.length; i++) {
+      // 前一半是 wy、后一半是 kw（顺序与 Future.wait 一致）
+      final kind = _catalogKinds[i];
+      final wy = results[i];
+      final kwR = results[i + _catalogKinds.length];
+      // 去重：同名同类型的只留一条（两平台常搜到同一个专辑）
+      final seen = <String>{};
+      for (final h in [...wy, ...kwR]) {
+        final key = '${h.kind.name}|${h.title}'.toLowerCase();
+        if (seen.add(key)) merged[kind]!.add(h);
+      }
+    }
+    setState(() {
+      for (final e in merged.entries) {
+        _catalog[e.key] = e.value;
+      }
+      _catalogLoading = false;
+    });
+  }
+
   Future<void> _search() async {
     final kw = _controller.text.trim();
     if (kw.isEmpty) return;
@@ -138,7 +191,15 @@ class _SearchPageState extends ConsumerState<SearchPage>
       _error = null;
       _groups = const [];
       _tabIndex = 0;
+      _catalogLoading = true;
+      for (final k in _catalogKinds) {
+        _catalog[k] = [];
+      }
     });
+
+    // 分类搜索与歌曲搜索**并发**：分类只查两家（wy/kw），
+    // 不阻塞歌曲结果的首屏出现。
+    unawaited(_loadCatalog(kw, gen));
 
     final builtinFuture = BuiltinSearch.searchAll(
       kw,
@@ -299,7 +360,9 @@ class _SearchPageState extends ConsumerState<SearchPage>
   }
 
   Widget _buildScaffold(ColorScheme scheme, SourceRegistry registry) {
-    final tabCount = 1 + _groups.length;
+    // 索引约定：0=全部，1..N=各平台歌曲分组，N+1..N+3=专辑/歌单/艺人。
+    // 分类 Tab 放在最后：用户最常用的是歌曲，不该被挤到后面。
+    final tabCount = 1 + _groups.length + _catalogKinds.length;
     if (_tabs == null || _tabs!.length != tabCount) {
       final old = _tabs;
       final initial = _tabIndex.clamp(0, tabCount - 1);
@@ -330,6 +393,22 @@ class _SearchPageState extends ConsumerState<SearchPage>
                 unselectedLabelStyle: const TextStyle(fontSize: 13),
                 tabs: [
                   Tab(text: '全部 $_totalCount'),
+                  // 分类 Tab 紧跟「全部」。
+                  // 位置关键：TabBar 横向滚动，排在 5 个平台 Tab 之后
+                  // 会被推出屏幕（真机验证：只看到平台 Tab）。
+                  // 而「找专辑/歌单/艺人」比「只看某一平台结果」更常用。
+                  for (final k in _catalogKinds)
+                    Tab(
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text(_catalogLabel(k)),
+                        if (_catalog[k]!.isNotEmpty) ...[
+                          const SizedBox(width: 4),
+                          Text('${_catalog[k]!.length}',
+                              style: TextStyle(
+                                  fontSize: 11, color: scheme.primary)),
+                        ],
+                      ]),
+                    ),
                   for (final g in _groups)
                     Tab(
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -446,8 +525,92 @@ class _SearchPageState extends ConsumerState<SearchPage>
       controller: _tabs,
       children: [
         _buildAllTab(scheme),
+        // 顺序必须与 TabBar 完全一致：分类在平台分组之前。
+        // 两边顺序不一致会导致点 Tab 显示错位内容。
+        for (final k in _catalogKinds) _buildCatalogTab(k, scheme),
         for (final g in _groups) _buildGroupTab(g, scheme),
       ],
+    );
+  }
+
+  static String _catalogLabel(SearchKind k) => switch (k) {
+        SearchKind.album => '专辑',
+        SearchKind.playlist => '歌单',
+        SearchKind.artist => '艺人',
+        SearchKind.song => '歌曲',
+      };
+
+  /// 分类结果列表（专辑 / 歌单 / 艺人）。
+  Widget _buildCatalogTab(SearchKind kind, ColorScheme scheme) {
+    final items = _catalog[kind]!;
+    if (_catalogLoading && items.isEmpty) {
+      return const Center(
+        child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (items.isEmpty) {
+      return Center(
+        child: Text('没有找到相关${_catalogLabel(kind)}',
+            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      itemCount: items.length,
+      itemBuilder: (context, i) {
+        final h = items[i];
+        return ListTile(
+          leading: SizedBox(
+            width: 44,
+            height: 44,
+            child: ClipRRect(
+              borderRadius:
+                  BorderRadius.circular(kind == SearchKind.artist ? 22 : 6),
+              child: (h.picUrl == null || h.picUrl!.isEmpty)
+                  ? Container(
+                      color: scheme.surfaceContainerHighest,
+                      child: Icon(
+                          kind == SearchKind.artist
+                              ? Icons.person
+                              : (kind == SearchKind.album
+                                  ? Icons.album
+                                  : Icons.queue_music),
+                          size: 20,
+                          color: scheme.onSurfaceVariant),
+                    )
+                  : Image.network(h.picUrl!,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => Container(
+                            color: scheme.surfaceContainerHighest,
+                            child: Icon(Icons.music_note,
+                                size: 20, color: scheme.onSurfaceVariant),
+                          )),
+            ),
+          ),
+          title: Text(h.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: h.subtitle.isEmpty
+              ? null
+              : Text(h.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12)),
+          trailing: const Icon(Icons.chevron_right, size: 18),
+          onTap: () {
+            if (kind == SearchKind.artist) {
+              _controller.text = h.title;
+              unawaited(_search());
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text('${_catalogLabel(kind)}详情页暂未开放'),
+                duration: const Duration(seconds: 2),
+              ));
+            }
+          },
+        );
+      },
     );
   }
 
