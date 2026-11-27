@@ -196,14 +196,30 @@ class PlayerCore {
     if (current != null) _pushToCast();
   }
 
+  /// 队列已空：彻底停播并重置状态，避免「mini player 消失但还在响」。
+  Future<void> _clearPlayback() async {
+    _index = -1;
+    _expectCompletion = false;
+    _endOfTrackPause = false;
+    _loadGeneration++; // 作废在途的 _loadAt，避免清空后又把歌载回来
+    await _engine.pause();
+    state.value = state.value.copyWith(
+        playing: false,
+        processing: EngineProcessing.idle,
+        title: '',
+        artist: '',
+        error: null,
+        clearError: true);
+    _pushToCast();
+  }
+
   /// 从队列移除一条。若移除的是当前曲：正在播放则顺延到下一首，否则只更新索引。
   Future<void> removeAt(int index) async {
     if (index < 0 || index >= _queue.length) return;
     final wasCurrent = index == _index;
     _queue.removeAt(index);
     if (_queue.isEmpty) {
-      _index = -1;
-      state.value = state.value.copyWith(playing: false, title: '', artist: '');
+      await _clearPlayback();
       return;
     }
     if (index < _index) {
@@ -424,7 +440,10 @@ class PlayerCore {
     if (snap.processing == EngineProcessing.completed && _expectCompletion) {
       _expectCompletion = false;
       if (_endOfTrackPause) {
-        // 定时关闭（播完当前首）：暂停而非自动下一首
+        // 定时关闭（播完当前首）：真正停引擎，而不是只改 UI 状态。
+        // 标志用过即清，否则手动切到下一首后结尾还会莫名停住。
+        _endOfTrackPause = false;
+        unawaited(_engine.pause());
         state.value = state.value.copyWith(playing: false);
         return;
       }
@@ -437,7 +456,10 @@ class PlayerCore {
     _queue
       ..clear()
       ..addAll(items);
-    if (items.isEmpty) return;
+    if (items.isEmpty) {
+      await _clearPlayback();
+      return;
+    }
     await _loadAt(index.clamp(0, items.length - 1));
   }
 
@@ -612,7 +634,18 @@ class PlayerCore {
     await _engine.pause();
   }
 
-  Future<void> seek(Duration pos) => _engine.seek(pos);
+  Future<void> seek(Duration pos) async {
+    state.value = state.value.copyWith(position: pos);
+    await _engine.seek(pos);
+    // 锁屏/通知栏的进度由系统按 speed 外推，seek 后必须补推一次，
+    // 否则通知栏进度会停在旧位置。这里直接调 updatePlayback 而不动
+    // 去重 key —— 把 position 放进 key 会让每 200ms 的 tick 也重推。
+    _cast?.updatePlayback(
+      playing: state.value.playing,
+      position: pos,
+      duration: state.value.duration,
+    );
+  }
 
   /// 后台预取下一首的播放地址（写入 resolver 的 URL 缓存）。
   /// 切歌时命中缓存即可瞬时出声，不必重新取链。

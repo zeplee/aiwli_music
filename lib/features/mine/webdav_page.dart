@@ -93,12 +93,13 @@ class _WebDavPageState extends ConsumerState<WebDavPage> {
       // 顺手建好远端目录，避免恢复/上传时 409 Conflict
       await ref.read(webDavServiceProvider).ensureRemoteDir();
       return '连接成功，远端目录 ${ref.read(webDavServiceProvider).normalizedDir} 已就绪';
-    } finally {}
+    } catch (e) {
+      return '连接失败：$e';
+    }
   }
 
   Future<String> _upload() async {
     _applyFieldsToService();
-    await ref.read(playlistsProvider).load();
     await ref.read(playlistsProvider).load();
     await ref.read(backupProvider).upload();
     final favCount =

@@ -6,6 +6,7 @@ import '../core/models/quality_rank.dart';
 import '../core/services/logger.dart';
 import '../sources/lx/lx_source.dart';
 import '../sources/registry.dart';
+import 'url_resolve_cache.dart';
 
 /// 一次取链的结果（含实际生效的源与曲目，便于上层更新 UI）。
 class ResolvedPlayback {
@@ -32,11 +33,11 @@ class ResolvedPlayback {
   /// 只按脚本拉黑会连带判死该脚本的其他平台；
   /// 只按平台拉黑会连带判死其他脚本的同一平台。
   ///
-  /// 注意：缓存命中与换源路径拿不到脚本 id，此时该字段退化为平台 id
-  /// （见 [PlaybackResolver.reportUnplayable] 的退化匹配）。
+  /// 缓存命中同样保留真实脚本 id，否则播放器拉黑死链的
+  /// (winnerId, 平台) 键永远匹配不上。
   final String winnerId;
 
-  /// 胜出时的平台 id（kw/tx/...）。缓存/换源路径为 null。
+  /// 胜出时的平台 id（kw/tx/...）。
   final String? winnerPlatform;
   final String sourceLabel;
   final String musicId;
@@ -66,7 +67,8 @@ class PlaybackResolveException implements Exception {
 ///  3. 取第一个匹配项，在新源上重试取链；**已试过的源不再重试**
 ///  4. 全部失败才抛错，错误里带上试过的源
 class PlaybackResolver {
-  PlaybackResolver(this._registry);
+  PlaybackResolver(this._registry, {UrlResolveCache? cache})
+      : _urlCache = cache ?? UrlResolveCache(ttl: _urlTtl);
 
   final SourceRegistry _registry;
 
@@ -105,7 +107,7 @@ class PlaybackResolver {
 
   String _deadKey(String lxId, String platformId) => '$lxId|$platformId';
 
-  /// 是否已判死。任一键为空时退化为单键匹配（缓存/换源路径拿不到脚本 id）。
+  /// 是否已判死。任一键为空时退化为单键匹配（上游只拿到平台 id 时兼容用）。
   bool _isDead(String lxId, {String? platformId}) {
     final keys = <String>[
       if (platformId != null) _deadKey(lxId, platformId),
@@ -131,9 +133,9 @@ class PlaybackResolver {
 
   /// 播放器报告「这个源+平台的 URL 打不开」。
   ///
-  /// [platformId] 与 [lxId] 都可能与调用方拿到的对象不同：
-  /// 缓存/换源路径只有平台 id，此时 lxId 传平台 id、platformId 传 null
-  /// 也能正确记下来（见 [_isDead] 的退化匹配）。
+  /// [platformId] 与 [lxId] 在上游只拿到平台 id 时都可能退化为单键：
+  /// 缓存/换源路径现在会带上真实脚本 id，
+  /// 退化匹配仅保留给那些只传平台名的旧调用方。
   void reportUnplayable(String lxId, {String? platformId, Object? error}) {
     final key = _deadKey(lxId, platformId ?? '');
     _deadUntil[key] = DateTime.now().add(_deadPenalty);
@@ -147,44 +149,42 @@ class PlaybackResolver {
   /// 造成 dispatch 超时连锁重建。
   final Map<String, Future<ResolvedPlayback>> _inFlight = {};
 
-  /// 播放地址缓存：key = sourceId|musicId，value = (url, 过期时间)。
-  ///
-  /// 对齐 lx-music 的 `music_url` 表（取链前先查缓存，命中直接返回不发请求）。
-  /// 平台直链通常带时效（vkey 约 20 分钟～数小时），故设 TTL 保守 10 分钟；
-  /// 过期自动丢弃重取。
+  /// 播放地址缓存：对齐 lx-music 的 `music_url` 表（命中直接返回不发请求）。
+  /// 平台直链通常带时效（vkey 约 20 分钟～数小时），故设 TTL 保守 10 分钟。
+  /// key 含 quality（切档位后不能命中旧档位 URL），value 含真实胜出源 id。
   static const _urlTtl = Duration(minutes: 10);
-  final Map<String, ({String url, DateTime expireAt})> _urlCache = {};
+  final UrlResolveCache _urlCache;
 
-  String _cacheKey(String sourceId, String musicId) => '$sourceId|$musicId';
+  String _cacheKey(String sourceId, String musicId, Quality quality) =>
+      UrlResolveCache.key(sourceId, musicId, quality);
 
-  /// 播放器报告 URL 打不开：作废该曲缓存（否则重试永远命中同一条死链）。
-  void invalidateCache(String sourceId, String musicId) {
-    _urlCache.remove(_cacheKey(sourceId, musicId));
-  }
+  /// 播放器报告 URL 打不开：作废该曲的所有音质变体缓存。
+  void invalidateCache(String sourceId, String musicId) =>
+      _urlCache.invalidate(sourceId, musicId);
 
-  /// 某源被拉黑时，作废它名下的全部缓存条目（key 前缀 = sourceId|）。
-  void invalidateCacheAll(String sourceId) {
-    final prefix = '$sourceId|';
-    _urlCache.removeWhere((k, _) => k.startsWith(prefix));
-  }
+  /// 某源被拉黑时，作废它名下的全部缓存条目（含所有 quality 变体）。
+  void invalidateCacheAll(String sourceId) =>
+      _urlCache.invalidateAll(sourceId);
 
-  String? _cacheGet(String sourceId, String musicId) {
-    final hit = _urlCache[_cacheKey(sourceId, musicId)];
-    if (hit == null) return null;
-    if (DateTime.now().isAfter(hit.expireAt)) {
-      _urlCache.remove(_cacheKey(sourceId, musicId));
-      return null;
-    }
-    return hit.url;
-  }
+  CachedResolution? _cacheGet(
+          String sourceId, String musicId, Quality quality) =>
+      _urlCache.get(sourceId, musicId, quality);
 
-  void _cachePut(String sourceId, String musicId, String url) {
-    _urlCache[_cacheKey(sourceId, musicId)] =
-        (url: url, expireAt: DateTime.now().add(_urlTtl));
-    // 简单容量控制，避免无限增长
-    if (_urlCache.length > 200) {
-      _urlCache.remove(_urlCache.keys.first);
-    }
+  void _cachePut({
+    required String sourceId,
+    required String musicId,
+    required Quality quality,
+    required ResolvedPlayback source,
+  }) {
+    _urlCache.put(
+      sourceId: sourceId,
+      musicId: musicId,
+      quality: quality,
+      url: source.url,
+      winnerId: source.winnerId,
+      winnerPlatform: source.winnerPlatform,
+      sourceLabel: source.sourceLabel,
+    );
   }
 
   /// 平台/源 → 上次成功的源 id。
@@ -202,7 +202,7 @@ class PlaybackResolver {
     Set<String> excludeIds = const {},
   }) {
     final ex = excludeIds.join(',');
-    final key = '${_cacheKey(sourceId, musicId)}|ex=$ex';
+    final key = '${_cacheKey(sourceId, musicId, quality)}|ex=$ex';
     final inflight = _inFlight[key];
     if (inflight != null) {
       AppLog.i('Resolve', '在途复用 $key');
@@ -238,16 +238,19 @@ class PlaybackResolver {
         '开始 source=$sourceId id=$musicId q=${quality.code} title="$title"');
 
     // —— 0. 缓存命中直接返回（切歌/重播几乎瞬时）——
-    final cached = excludeIds.isEmpty ? _cacheGet(sourceId, musicId) : null;
+    final cached = excludeIds.isEmpty
+        ? _cacheGet(sourceId, musicId, quality)
+        : null;
     if (cached != null) {
       total.stop();
-      AppLog.i('Resolve', '缓存命中，用时 ${total.elapsedMilliseconds}ms');
+      AppLog.i('Resolve',
+          '缓存命中，用时 ${total.elapsedMilliseconds}ms（winner=${cached.winnerId}）');
       return ResolvedPlayback(
-        url: cached,
+        url: cached.url,
         sourceId: sourceId,
-        winnerId: sourceId,
-        winnerPlatform: sourceId,
-        sourceLabel: _label(sourceId),
+        winnerId: cached.winnerId,
+        winnerPlatform: cached.winnerPlatform,
+        sourceLabel: cached.sourceLabel,
         musicId: musicId,
         title: title,
         artist: artist,
@@ -264,7 +267,11 @@ class PlaybackResolver {
       raw: raw,
     );
     if (first != null) {
-      _cachePut(sourceId, musicId, first.url);
+      _cachePut(
+          sourceId: sourceId,
+          musicId: musicId,
+          quality: quality,
+          source: first);
       total.stop();
       AppLog.i('Resolve',
           '本源取链成功，用时 ${total.elapsedMilliseconds}ms（source=$sourceId）');
@@ -309,22 +316,28 @@ class PlaybackResolver {
       for (var i = 0; i < todo.length; i++) {
         final r = results[i];
         if (r == null) continue;
-        final c = todo[i];
         total.stop();
         AppLog.i('Resolve',
-            '换源成功 $sourceId → ${c.sourceId}，总用时 ${total.elapsedMilliseconds}ms');
-        _cachePut(sourceId, musicId, r.url);
-        return ResolvedPlayback(
+            '换源成功 $sourceId → ${r.sourceId}，总用时 ${total.elapsedMilliseconds}ms');
+        // 保留 _tryOne 拿到的真实胜出脚本 id：播放器拉黑死链用的是
+        // (winnerId, 平台)，换成 c.sourceId（平台名）会让键永远匹配不上。
+        final swapped = ResolvedPlayback(
           url: r.url,
-          sourceId: c.sourceId,
-          winnerId: c.sourceId,
-          winnerPlatform: c.sourceId,
-          sourceLabel: _label(c.sourceId),
-          musicId: c.musicId,
+          sourceId: r.sourceId,
+          winnerId: r.winnerId,
+          winnerPlatform: r.winnerPlatform,
+          sourceLabel: r.sourceLabel,
+          musicId: r.musicId,
           title: r.title,
           artist: r.artist,
           toggled: true,
         );
+        _cachePut(
+            sourceId: sourceId,
+            musicId: musicId,
+            quality: quality,
+            source: swapped);
+        return swapped;
       }
     }
 
@@ -506,11 +519,8 @@ class PlaybackResolver {
           sw.stop();
           if (url.isNotEmpty) {
             AppLog.i('Resolve', '  ${lx.name} 成功 ${sw.elapsedMilliseconds}ms');
-            // 胜出即取消其余输家：它们还挂在各自 runtime 的串行队列上，
-            // 任其超时会触发 6s 等待 + 重建级联（现场日志证实）。
-            for (final other in candidates) {
-              if (other.id != lx.id) other.cancelPending();
-            }
+            // 不取消输家：cancelPending() 会重建 JS 引擎，污染紧接着的取链。
+            // 让它们自然超时结束（各自 6s timeout 已封顶）。
             finish((lx.id, url));
           } else {
             AppLog.w('Resolve', '  ${lx.name} 空结果 ${sw.elapsedMilliseconds}ms');
@@ -549,7 +559,11 @@ class PlaybackResolver {
       try {
         await lx.waitInited();
         if (lx.actions.contains('musicSearch')) capable.add(lx);
-      } catch (_) {}
+      } catch (e) {
+        // 初始化失败时该源会被排除在搜索候选之外；记录具体错误与源名，
+        // 否则上层只会看到笼统的「所有音源都无法取到播放链接」。
+        AppLog.w('Resolve', '源 ${lx.name}（${lx.id}）初始化失败，已跳过搜索候选: $e');
+      }
     }));
     if (capable.isEmpty) return const [];
 
