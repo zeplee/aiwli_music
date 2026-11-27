@@ -882,19 +882,31 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
     // 因此封面页永远保留，只是没有歌曲时渲染占位（见 _coverPage）。
     final pages = widget.wideMode
         ? <Widget>[
-            const ClipRRect(
-              borderRadius: BorderRadius.all(Radius.circular(20)),
-              child: LyricsPanel(compact: false),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: ClipRRect(
+                borderRadius: BorderRadius.all(Radius.circular(20)),
+                child: LyricsPanel(compact: false),
+              ),
             ),
-            const _CommentsPage(),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: _CommentsPage(),
+            ),
           ]
         : <Widget>[
             _coverPage(scheme, widget.playing, round),
-            const ClipRRect(
-              borderRadius: BorderRadius.all(Radius.circular(20)),
-              child: LyricsPanel(compact: false),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: ClipRRect(
+                borderRadius: BorderRadius.all(Radius.circular(20)),
+                child: LyricsPanel(compact: false),
+              ),
             ),
-            const _CommentsPage(),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: _CommentsPage(),
+            ),
           ];
     return SizedBox.expand(
       child: Column(
