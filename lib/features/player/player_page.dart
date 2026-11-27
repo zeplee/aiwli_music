@@ -171,10 +171,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                   ),
                   // 内容区才需要避让状态栏/刘海；背景层已经铺满全屏
                   SafeArea(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      child: Column(
-                        children: [
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
                           Row(
                             children: [
                               IconButton(
@@ -334,7 +337,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          // 上半区：窄屏=三页滑动；宽屏(>900)=左封面 + 右歌词/评论分栏
+                            ],
+                          ),
+                        ),
                           Expanded(
                             child: LayoutBuilder(
                               builder: (context, c) {
@@ -364,6 +369,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                               },
                             ),
                           ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
                           _SeekBar(
                             position: pos,
                             duration: duration,
@@ -521,9 +531,11 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                                   )
                                 : null,
                           ),
-                          const SizedBox(height: 4),
-                        ],
-                      ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                      ],
                     ),
                   ),
                 ],
