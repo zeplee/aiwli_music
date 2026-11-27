@@ -519,8 +519,12 @@ class PlaybackResolver {
           sw.stop();
           if (url.isNotEmpty) {
             AppLog.i('Resolve', '  ${lx.name} 成功 ${sw.elapsedMilliseconds}ms');
-            // 不取消输家：cancelPending() 会重建 JS 引擎，污染紧接着的取链。
-            // 让它们自然超时结束（各自 6s timeout 已封顶）。
+            // 取消输家的在途请求，释放 dispatch 的串行队列；
+            // 用 cancelInFlight 而不是 cancelPending —— 后者会重建 JS 引擎，
+            // 污染紧接着的下一次取链（切歌后卡住的根因）。
+            for (final other in candidates) {
+              if (other.id != lx.id) other.cancelInFlight();
+            }
             finish((lx.id, url));
           } else {
             AppLog.w('Resolve', '  ${lx.name} 空结果 ${sw.elapsedMilliseconds}ms');

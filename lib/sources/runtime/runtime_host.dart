@@ -471,6 +471,19 @@ if (typeof console !== 'undefined') {
   ///
   /// 并发取链场景：某个源已胜出，其余源的请求还挂在串行队列里，
   /// 若任其自然超时会触发 6s 等待 + 639KB 重建级联。立即复位最划算。
+  /// 轻量取消在途 dispatch：只让当前请求立即结束，不重建 JS 引擎。
+  ///
+  /// 与 [cancelPending] 的区别：后者 `_recreate()` 会丢弃引擎 + 等 5s，
+  /// 并发取链的输家调用它会污染紧接着的下一次取链；但如果不取消，
+  /// `dispatch()` 的串行保护会让下一首歌排队等上一个最多 16s —— 用户
+  /// 看到的就是「切歌后一直转圈、不出声」。
+  void cancelInFlight() {
+    final c = _resultCompleter;
+    if (c != null && !c.isCompleted) {
+      c.complete(<Object?, Object?>{'ok': false, 'error': 'cancelled'});
+    }
+  }
+
   void cancelPending() {
     final c = _resultCompleter;
     _resultCompleter = null;

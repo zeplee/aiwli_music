@@ -232,6 +232,9 @@ class LxSource {
   /// 取消在途取链（并发取链的输家调用，避免串行队列被占满）。
   void cancelPending() => _runtime.cancelPending();
 
+  /// 并发取链的输家用：释放串行队列但不重建 JS 引擎。
+  void cancelInFlight() => _runtime.cancelInFlight();
+
   Future<void> dispose() => _runtime.dispose();
 }
 
