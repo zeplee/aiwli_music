@@ -532,6 +532,13 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
       artist: item.artist,
     );
     if (!mounted) return;
+    // 网络查找耗时数秒，期间用户可能已切歌。用发起时的曲目身份校验，
+    // 否则会把当前曲换成上一首歌的伴奏。
+    final now = core.current;
+    final sameTrack = now != null &&
+        now.sourceId == item.sourceId &&
+        now.musicId == item.musicId;
+    if (!sameTrack) return;
     if (found == null) {
       messenger
         ..hideCurrentSnackBar()
@@ -563,6 +570,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
     );
     final newQueue = [...q]..[idx] = replaced;
     await core.setQueue(newQueue, index: idx);
+    if (!mounted) return; // setQueue 后页面可能已被 pop
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -600,7 +608,7 @@ class _PlayModeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final (icon, label) = switch (mode) {
-      PlayMode.sequential => (Icons.repeat, '顺序播放'),
+      PlayMode.sequential => (Icons.playlist_play, '顺序播放'),
       PlayMode.repeatOne => (Icons.repeat_one, '单曲循环'),
       PlayMode.shuffle => (Icons.shuffle, '随机播放'),
     };
@@ -626,7 +634,7 @@ class _PlayPauseButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final core = ref.watch(playerCoreProvider);
     return InkWell(
-      onTap: () => playing ? core.pause() : core.play(),
+      onTap: core.togglePlayPause,
       customBorder: const CircleBorder(),
       child: Container(
         width: 72,
@@ -670,9 +678,25 @@ class _SeekBarState extends State<_SeekBar> {
   double? _dragValue;
 
   @override
+  void didUpdateWidget(covariant _SeekBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 切歌（时长变化）时丢弃上次未完成的拖动，否则新歌会从旧位置开始。
+    // position 的常规 tick 不触发，只有 duration 变了才重置。
+    if (oldWidget.duration != widget.duration) {
+      _dragValue = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final max = widget.duration.inMilliseconds.toDouble();
+    // seek 后引擎 position 会追上目标；到这一步才解除拖动预览锁。
+    final drag = _dragValue;
+    if (drag != null &&
+        (widget.position.inMilliseconds.toDouble() - drag).abs() < 500) {
+      _dragValue = null;
+    }
     final value = _dragValue ?? widget.position.inMilliseconds.toDouble();
     final bufferedRatio = max <= 0
         ? 0.0
@@ -754,8 +778,15 @@ class _SeekBarState extends State<_SeekBar> {
                     ? (v) => setState(() => _dragValue = v)
                     : null,
                 onChangeEnd: (v) {
+                  // 先提交 seek，保留拖动预览值直到引擎 position 追上目标，
+                  // 否则 mpv 应用 seek 前的 position 事件会把滑块拽回旧位置。
+                  // 2 秒兜底：seek 失败或引擎没上报 position 时也要解锁。
                   widget.onChanged(v);
-                  setState(() => _dragValue = null);
+                  Future<void>.delayed(const Duration(seconds: 2), () {
+                    if (mounted && _dragValue == v) {
+                      setState(() => _dragValue = null);
+                    }
+                  });
                 },
               ),
             ],
