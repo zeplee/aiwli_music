@@ -8,6 +8,7 @@ import 'core/lyric/lrc_parser.dart';
 import 'core/models/lyric.dart';
 import 'core/models/music.dart';
 import 'core/services/app_settings.dart';
+import 'core/services/download_queue.dart';
 import 'core/services/backup_service.dart';
 import 'core/services/comment_paging.dart';
 import 'core/services/logger.dart';
@@ -369,6 +370,8 @@ final commentServiceProvider =
 
 // ============ 下载（dio 流式 → MediaStore 落库）============
 
+/// UI 用的下载任务视图。状态字符串保留给既有页面（mine_page 等）使用，
+/// 真正的状态机在 [DownloadQueue]。
 class DownloadTask {
   DownloadTask({required this.title, required this.artist});
   final String title;
@@ -376,86 +379,161 @@ class DownloadTask {
   int received = 0;
   int total = 0;
   String status = '排队中';
+  String? error;
+  DownloadJob? job;
 
-  /// 落库成功后回填：媒体库 uri（content://）与磁盘路径。
-  /// 有 uri 就能直接当本地曲目播放，不必再去系统音乐 App 里找。
   String? savedUri;
   String? savedPath;
   bool get playable => savedUri != null && savedUri!.isNotEmpty;
+  bool get finished => status == '完成 ✓' || status.startsWith('失败');
 }
 
 class DownloadManager extends SafeNotifier {
-  DownloadManager(this._ref);
+  DownloadManager(this._ref) {
+    _queue = DownloadQueue(
+      run: _run,
+      onChanged: _sync,
+      maxConcurrent: 2,
+    );
+  }
+
   final Ref _ref;
+  late final DownloadQueue _queue;
   final List<DownloadTask> tasks = [];
-  final Set<String> _activeKeys = {};
+  final List<DownloadTask> history = [];
+  final Map<String, DownloadTask> _byKey = {};
 
-  Future<void> start(PlayerItem item) async {
-    final key = '${item.sourceId}/${item.musicId}';
-    if (_activeKeys.contains(key)) return;
-    _activeKeys.add(key);
-    final task = DownloadTask(title: item.title, artist: item.artist)
-      ..status = '取链接…';
-    tasks.insert(0, task);
-    notifyListeners();
+  DownloadTask _view(DownloadJob job) {
+    final existing = _byKey[job.key];
+    final v = existing ?? DownloadTask(title: job.title, artist: job.artist);
+    v.job = job;
+    v.status = switch (job.status) {
+      DownloadStatus.queued => '排队中',
+      DownloadStatus.resolving => '取链接…',
+      DownloadStatus.downloading => '下载中',
+      DownloadStatus.paused => '已暂停',
+      DownloadStatus.failed => '失败',
+      DownloadStatus.done => '完成 ✓',
+    };
+    v.received = job.received;
+    v.total = job.total;
+    v.savedUri = job.savedUri;
+    v.savedPath = job.savedPath;
+    v.error = job.error;
+    _byKey[job.key] = v;
+    return v;
+  }
 
-    try {
-      final resolved = await resolveUrl(_ref, item, const {});
-      final url = resolved.url;
-      task.status = '下载中';
-      notifyListeners();
-
-      final dio = _ref.read(dioProvider);
-      final resp = await dio.get<ResponseBody>(url,
-          options: Options(responseType: ResponseType.stream));
-      final body = resp.data!;
-      // 服务端给了 Content-Length 才有「总大小」，否则只能显示已下载字节
-      final total = int.tryParse(
-              resp.headers.value(Headers.contentLengthHeader) ?? '') ??
-          0;
-      if (total > 0) {
-        task.total = total;
-      }
-      final bytesBuilder = BytesBuilder(copy: false);
-      var lastNotify = 0;
-      await for (final chunk in body.stream) {
-        bytesBuilder.add(chunk);
-        task.received = bytesBuilder.length;
-        // 限频：约 150ms 一次，避免每 8KB 就重建整棵树
-        final now = DateTime.now().millisecondsSinceEpoch;
-        if (now - lastNotify > 150) {
-          lastNotify = now;
-          notifyListeners();
-        }
-      }
-      final bytes = bytesBuilder.takeBytes();
-
-      await _ref.read(flutterMediaStoreProvider).saveFile(
-            fileData: bytes,
-            mimeType: 'audio/mpeg',
-            rootFolderName: 'Music',
-            folderName: 'AiwliMusic',
-            fileName:
-                '${item.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')}.mp3',
-            onSuccess: (uri, path) {
-              task.savedUri = uri;
-              task.savedPath = path;
-              AppLog.i('Download', '落库成功 ${item.title} uri=$uri path=$path');
-              notifyListeners();
-            },
-            onError: (msg) => AppLog.e('Download', '落库失败 ${item.title}', msg),
-          );
-      task
-        ..status = '完成 ✓'
-        ..total = bytes.length
-        ..received = bytes.length;
-    } catch (e) {
-      task.status = '失败: ${e.toString().substring(0, 60)}';
-      AppLog.e('Download', '失败 ${item.title}', e);
+  void _sync() {
+    final active = <DownloadTask>[];
+    for (final j in _queue.jobs) {
+      if (!j.finished) active.add(_view(j));
     }
-    _activeKeys.remove(key);
+    tasks
+      ..clear()
+      ..addAll(active);
+    history
+      ..clear()
+      ..addAll([for (final j in _queue.history) _view(j)]);
     notifyListeners();
   }
+
+  Future<void> _run(DownloadJob job, DownloadCancel cancel) async {
+    final item = _items[job.key];
+    if (item == null) throw StateError('任务缺少曲目信息');
+    final v = _view(job);
+    final resolved = await resolveUrl(_ref, item, const {});
+    if (cancel.cancelled) throw const DownloadCancelled();
+    job.status = DownloadStatus.downloading;
+    _sync();
+
+    final dio = _ref.read(dioProvider);
+    final dioCancel = CancelToken();
+    cancel.onCancel = () => dioCancel.cancel();
+    final resp = await dio.get<ResponseBody>(
+      resolved.url,
+      options: Options(responseType: ResponseType.stream),
+      // 暂停/删除时真正中断流式下载，而不是只改状态字符串。
+      cancelToken: dioCancel,
+    );
+    final body = resp.data!;
+    job.total = int.tryParse(
+            resp.headers.value(Headers.contentLengthHeader) ?? '') ??
+        0;
+    final builder = BytesBuilder(copy: false);
+    var lastNotify = 0;
+    await for (final chunk in body.stream) {
+      if (cancel.cancelled) throw const DownloadCancelled();
+      builder.add(chunk);
+      job.received = builder.length;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - lastNotify > 150) {
+        lastNotify = now;
+        _sync();
+      }
+    }
+    if (cancel.cancelled) throw const DownloadCancelled();
+    final bytes = builder.takeBytes();
+
+    final mediaStore = _ref.read(flutterMediaStoreProvider);
+    var saveError = '';
+    await mediaStore.saveFile(
+      fileData: bytes,
+      mimeType: 'audio/mpeg',
+      rootFolderName: 'Music',
+      folderName: 'AiwliMusic',
+      fileName:
+          '${item.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')}.mp3',
+      onSuccess: (uri, path) {
+        job.savedUri = uri;
+        job.savedPath = path;
+        v.savedUri = uri;
+        v.savedPath = path;
+        AppLog.i('Download', '落库成功 ${item.title} uri=$uri path=$path');
+      },
+      onError: (msg) {
+        saveError = msg;
+        AppLog.e('Download', '落库失败 ${item.title}', msg);
+      },
+    );
+    if (saveError.isNotEmpty) throw StateError(saveError);
+    job.total = bytes.length;
+    job.received = bytes.length;
+  }
+
+  final Map<String, PlayerItem> _items = {};
+
+  /// 入队下载；同曲不重复排队。保留原签名，既有调用点零改动。
+  Future<void> start(PlayerItem item) async {
+    final key = '${item.sourceId}/${item.musicId}';
+    _items[key] = item;
+    _queue.enqueue(key, title: item.title, artist: item.artist);
+  }
+
+  void pause(DownloadTask t) {
+    final j = t.job;
+    if (j != null) _queue.pause(j);
+  }
+
+  void resume(DownloadTask t) {
+    final j = t.job;
+    if (j != null) _queue.resume(j);
+  }
+
+  void retry(DownloadTask t) {
+    final j = t.job;
+    if (j != null) _queue.retry(j);
+  }
+
+  void remove(DownloadTask t) {
+    final j = t.job;
+    if (j != null) {
+      _items.remove(j.key);
+      _queue.remove(j);
+    }
+  }
+
+  void clearFinished() => _queue.clearFinished();
 }
 
 final downloadManagerProvider =

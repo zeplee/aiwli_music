@@ -183,8 +183,12 @@ class MinePage extends ConsumerWidget {
 
   static String tasksSubtitle(WidgetRef ref) {
     final manager = ref.watch(downloadManagerProvider);
-    final running =
-        manager.tasks.where((t) => t.status == '下载中').length;
+    final running = manager.tasks
+        .where((t) =>
+            t.status == '下载中' ||
+            t.status == '取链接…' ||
+            t.status == '排队中')
+        .length;
     if (manager.tasks.isEmpty) return '暂无任务';
     return running > 0
         ? '${manager.tasks.length} 个任务（$running 个进行中）'
