@@ -39,20 +39,31 @@ class MobileAudioFocus implements AudioFocusPolicy {
     StreamSubscription<void>? subNoisy;
     ctrl = StreamController<FocusEvent>.broadcast(onListen: () async {
       final s = await _session();
-      subInt = s.interruptionEventStream.map((e) => switch (e.type) {
-            AudioInterruptionType.pause =>
-              const FocusEvent(FocusEventType.interruptionBegin),
-            AudioInterruptionType.duck =>
-              const FocusEvent(FocusEventType.duckBegin, isDuck: true),
-            AudioInterruptionType.unknown =>
-              const FocusEvent(FocusEventType.interruptionBegin),
-          }).listen(ctrl.add);
+      subInt = s.interruptionEventStream.map((e) {
+        // audio_session 0.2.4 的 `begin` 才是中断的开始/结束标志：
+        // Android 的 gain 事件带 begin=false，iOS 的 interruption ended 同样。
+        // 早期只看 e.type，于是 end 也被映射成 begin ——
+        // PlayerCore 的恢复分支永远收不到事件，来电/导航播报结束后
+        // 音乐一直停在暂停，用户感知为「有时候音乐不播放」。
+        final isDuck = e.type == AudioInterruptionType.duck;
+        if (e.begin) {
+          return isDuck
+              ? const FocusEvent(FocusEventType.duckBegin, isDuck: true)
+              : const FocusEvent(FocusEventType.interruptionBegin);
+        }
+        return isDuck
+            ? const FocusEvent(FocusEventType.duckEnd)
+            : const FocusEvent(FocusEventType.interruptionEnd);
+      }).listen(ctrl.add);
       subNoisy = s.becomingNoisyEventStream
           .map((_) => const FocusEvent(FocusEventType.becomingNoisy))
           .listen(ctrl.add);
     }, onCancel: () async {
       await subInt?.cancel();
       await subNoisy?.cancel();
+      subInt = null;
+      subNoisy = null;
+      if (!ctrl.isClosed) await ctrl.close();
     });
     return ctrl.stream;
   }

@@ -125,22 +125,38 @@ class PlayerCore {
   final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
+  bool _inInterruption = false;
+  bool _userPausedDuringInterruption = false;
 
   // 中断恢复策略（ADR-003/009）：中断→暂停并记忆；恢复→按记忆续播；拔耳机→暂停
   void _onFocusEvent(FocusEvent e) {
     switch (e.type) {
       case FocusEventType.interruptionBegin:
-        _wasPlayingBeforeInterruption = state.value.playing;
+        // 连续多个 begin（Android 会先发 loss 再发 lossTransient）不能再覆盖
+        // 记忆值，否则第二次会把「中断前正在播放」记成 false。
+        if (!_inInterruption) {
+          _wasPlayingBeforeInterruption = state.value.playing;
+          _inInterruption = true;
+        }
         state.value = state.value.copyWith(playing: false);
         unawaited(_engine.pause());
         break;
       case FocusEventType.interruptionEnd:
-        if (_wasPlayingBeforeInterruption) {
+        // 中断期间用户若主动暂停过，就不再擅自续播。
+        if (_inInterruption &&
+            _wasPlayingBeforeInterruption &&
+            !_userPausedDuringInterruption) {
           state.value = state.value.copyWith(playing: true);
           unawaited(_engine.play());
         }
+        _inInterruption = false;
+        _wasPlayingBeforeInterruption = false;
+        _userPausedDuringInterruption = false;
         break;
       case FocusEventType.becomingNoisy:
+        // 拔耳机属于主动断开，不参与中断恢复。
+        _inInterruption = false;
+        _wasPlayingBeforeInterruption = false;
         state.value = state.value.copyWith(playing: false);
         unawaited(_engine.pause());
         break;
@@ -562,6 +578,8 @@ class PlayerCore {
   }
 
   Future<void> pause() async {
+    // 中断期间用户主动按了暂停：结束事件不应把音乐又放出来。
+    if (_inInterruption) _userPausedDuringInterruption = true;
     state.value = state.value.copyWith(playing: false);
     await _engine.pause();
   }
