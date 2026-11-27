@@ -3,6 +3,50 @@
 本文件记录每个发布版本的用户可见变化。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.3.6] - 2026-11-13
+
+### 发现页改版：接入液态玻璃 + 补齐缺失版块
+
+**接入 liquid_glass_widgets 1.17.2**（pub 上 star 最高、唯一正式版、零外部依赖、
+六端全支持的开源液态玻璃库）：
+
+- `main()` 里 `LiquidGlassWidgets.initialize()` 预热着色器（只读磁盘到内存，
+  不产生 GPU 绘制，不拖慢首帧；失败只告警不阻断启动）
+- `app.dart` 用 `LiquidGlassWidgets.wrap()` 包裹，并传
+  `brightnessResolver: Theme.maybeBrightnessOf`——MaterialApp 用户必须传，
+  否则玻璃读的是系统亮度而不是主题亮度，深色模式下阴影/描边会消失
+- 开启 `adaptiveQuality`：启动时基准测试设备，慢机自动降到 minimal，
+  过热降级、降温恢复（Android 9 平板实测正常渲染，未崩溃）
+
+### 功能补齐（对照栖弦 v1.1.2 发现页）
+
+| 项目 | 改前 | 改后 |
+|---|---|---|
+| 精选歌单 | 无 | 新增，2 列网格 + 平台分类 |
+| 歌单详情 | 无 | 新增，点开看曲目 / 播放全部 |
+| 下拉刷新 | 无 | 全页刷新 |
+| 滚动位置 | 每次重进回顶部 | `PageStorageKey` 记忆 |
+| 榜单加载 | 居中转圈，撑走下方版块 | 骨架屏，占位等高不跳版 |
+| 区块标题 | 只有标题 | 加副标题说明 |
+
+### 修复两个真实运行时 bug
+
+1. **`InkWell` 在玻璃容器里直接崩溃**
+   `GlassScaffold`/`GlassContainer` 都不是 `Material`，其内放 `InkWell`
+   会抛 `No Material widget found`。新增 `GlassTap`（透明 Material + InkWell）
+   统一包裹所有玻璃内可点区域。
+
+2. **标题与搜索栏重叠**
+   `GlassScaffold` 的 `extendBody` 默认 `true`（iOS 26 风格），正文会顶到
+   玻璃 AppBar 下方。实测搜索栏 y=22-162、标题 y=112-189 压在一起。
+   改为 `extendBody: false`，正文精确排在 AppBar 下方（搜索栏 y=233-373）。
+
+### 在线歌单接口
+
+新增 `CatalogSdk.playlistSongs()`。实测**只有网易**提供免签名的歌单曲目接口，
+酷我需要额外签名，所以酷我分类下点开歌单会明确提示"这个平台暂不支持展开歌单"，
+而不是转圈后一片空白。
+
 ## [1.3.5] - 2026-11-09
 
 ### 修复：播放按钮不居中

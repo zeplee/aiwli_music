@@ -3,14 +3,16 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:aiwli_music/app.dart';
 import 'package:aiwli_music/features/discover/daily_recommend.dart';
+import 'package:aiwli_music/features/discover/featured_playlists.dart';
 import 'package:aiwli_music/player/audio_engine.dart';
 import 'package:aiwli_music/player/providers.dart';
 
 void main() {
   testWidgets('app boots to home', (tester) async {
-    // 每日推荐会发起真实网络请求；测试环境无网络且禁止挂起定时器，
+    // 每日推荐与精选歌单都会发起真实网络请求；测试环境无网络且禁止挂起定时器，
     // 注入固定结果让首帧可预测（生产不受影响）。
     DailyRecommend.overrideFetcher = () async => const [];
+    FeaturedPlaylists.overrideFetcher = (_) async => const [];
 
     await tester.pumpWidget(ProviderScope(
       overrides: [engineProvider.overrideWithValue(StubEngine())],
@@ -23,5 +25,6 @@ void main() {
     expect(find.text('我的'), findsOneWidget);
 
     DailyRecommend.overrideFetcher = null;
+    FeaturedPlaylists.overrideFetcher = null;
   });
 }

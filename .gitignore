@@ -46,3 +46,10 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 本机构建产物（不是仓库内容）
+/android/build/
+
+# Flutter 自动生成，不入库（与远端既有约定一致）
+.metadata
+**/Flutter/GeneratedPluginRegistrant.swift

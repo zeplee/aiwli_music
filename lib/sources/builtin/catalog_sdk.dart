@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../core/models/music.dart';
 import '../../core/services/logger.dart';
 import 'builtin_base.dart';
 
@@ -267,6 +268,78 @@ class CatalogSdk {
 
       case SearchKind.song:
         return const [];
+    }
+  }
+  // ————————————————— 在线歌单曲目 —————————————————
+
+  /// 取某个在线歌单的曲目（用于「精选歌单」点进去看内容）。
+  ///
+  /// 只实现网易：酷我的歌单曲目接口需要额外签名，暂时返回空列表，
+  /// 由调用方显示"这个平台暂不支持展开"。宁可明确说没有，
+  /// 也不要点进去转圈之后一片空白。
+  /// 测试可注入的取数实现（同 DailyRecommend 的模式）：
+  /// widget 的 initState 里直接发网络请求会让 flutter_test 出现"挂起定时器"失败。
+  static Future<List<MusicInfo>> Function({
+    required String source,
+    required String playlistId,
+    int limit,
+  })? overridePlaylistFetcher;
+
+  static Future<List<MusicInfo>> playlistSongs({
+    required String source,
+    required String playlistId,
+    int limit = 100,
+  }) async {
+    final o = overridePlaylistFetcher;
+    if (o != null) {
+      return o(source: source, playlistId: playlistId, limit: limit);
+    }
+    if (source != 'wy') return const [];
+    try {
+      final raw = await BuiltinHttp.getJson(
+        'https://music.163.com/api/playlist/detail?id=$playlistId',
+        headers: const {'Referer': 'https://music.163.com/'},
+      );
+      final body = tryDecodeJson(raw);
+      if (body is! Map) return const [];
+      final result = body['result'];
+      if (result is! Map) return const [];
+      final tracks = result['tracks'] as List? ?? const [];
+      final out = <MusicInfo>[];
+      for (final t in tracks) {
+        if (t is! Map) continue;
+        if (out.length >= limit) break;
+        final id = '${t['id'] ?? ''}';
+        if (id.isEmpty) continue;
+        final artists = (t['artists'] as List? ?? const [])
+            .whereType<Map>()
+            .map((a) => '${a['name'] ?? ''}')
+            .where((n) => n.isNotEmpty)
+            .join(' / ');
+        final album = t['album'];
+        out.add(MusicInfo(
+          sourceId: 'wy',
+          musicId: id,
+          title: '${t['name'] ?? ''}',
+          artist: artists,
+          album: album is Map
+              ? Album(
+                  id: '${album['id'] ?? ''}',
+                  name: '${album['name'] ?? ''}',
+                  picUrl: '${album['picUrl'] ?? ''}'.isEmpty
+                      ? null
+                      : '${album['picUrl']}',
+                )
+              : null,
+          duration: Duration(
+              milliseconds: int.tryParse('${t['duration'] ?? 0}') ?? 0),
+          raw: t,
+        ));
+      }
+      return out;
+    } catch (e) {
+      AppLog.w('CatalogSdk', 'playlistSongs 失败: $e');
+      return const [];
     }
   }
 }

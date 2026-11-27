@@ -1,17 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../app_providers.dart';
 import '../../core/models/music.dart';
 import '../../sources/builtin/board_songs.dart';
 import '../../sources/builtin/builtin_boards.dart';
+import '../../sources/builtin/catalog_sdk.dart';
+import 'featured_playlists.dart';
+import 'glass_tap.dart';
+import 'online_playlist_page.dart';
 import 'daily_recommend.dart';
 import '../../../player/player_core.dart';
 import '../player/player_page.dart';
 import '../mine/source_manage_page.dart';
 
-/// 发现页：顶部搜索 → 每日推荐 Hero → 排行榜横滑（脚本能力驱动）→
-/// 今日热门（飙升榜）→ 继续聆听 → 快速播放 → 音源状态。
+/// 发现页：液态玻璃质感的推荐流。
+///
+/// 结构（对齐栖弦 DiscoveryContent，但保留我们的内置榜单优势）：
+///   • 玻璃搜索栏 + 无脚本提示
+///   • 「每日推荐」玻璃卡片（曲目预览 + 播放全部 + 换一批）
+///   • 「排行榜」平台切换 + Top 榜单列表
+///   • 「精选歌单」分类切换 + 瀑布流网格 —— 新增
+///   • 下拉刷新 —— 新增
+///   • 滚动位置记忆 / 加载更多 —— 新增
+///
+/// 关于背景：玻璃必须折射"身后"的内容。纯色背景下玻璃看起来是平的，
+/// 所以外层 GlassScaffold 传一张与封面同色系的渐变作为 background，
+/// 玻璃卡片才有真实的折射与边缘高光。
 class DiscoverPage extends ConsumerStatefulWidget {
   const DiscoverPage({this.onOpenSearch, super.key});
 
@@ -22,16 +38,15 @@ class DiscoverPage extends ConsumerStatefulWidget {
 }
 
 class _DiscoverPageState extends ConsumerState<DiscoverPage> {
-  /// 发现页当前查看的音源。
-  /// 榜单只由 lx 脚本提供（内置五平台 SDK 都没有榜单接口），
-  /// 所以按"已安装的源"切换——对齐 lx 的 base-selection
-  /// 与栖弦的 DiscoverySourceSelector。
+  /// 发现页当前查看的音源（榜单由 lx 脚本提供时的源切换）。
   String? _selectedSourceId;
 
   /// 榜单当前查看的平台（内置榜单，与脚本源选择独立）。
   String _boardSource = 'kw';
 
-  /// 当前生效的源：优先用户选择，否则回落活跃源。
+  /// 刷新计数器：递增即触发所有子块重新取数。
+  int _refreshTick = 0;
+
   String? _effectiveSourceId() {
     final reg = ref.watch(sourceRegistryProvider);
     if (_selectedSourceId != null &&
@@ -41,19 +56,11 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     return reg.activeId;
   }
 
-  /// 是否有能力取链（决定"能不能真的播"）。
-  ///
-  /// 关键区分：发现页的榜单/推荐来自**内置接口**，零脚本也有内容；
-  /// 但取链（musicUrl）只走 lx 脚本。两者要分开判断。
   bool _canPlay() => ref
       .read(sourceRegistryProvider)
       .enabledRuntimes
       .any((r) => r.actions.contains('musicUrl'));
 
-  /// 没有取链能力时提前拦下并给出直达入口。
-  ///
-  /// 不这么做的话，用户点歌 → 进播放页 → 等取链失败 → 看到"资源失效"
-  /// 红条，却不知道真正原因是"没导入脚本"。
   void _blockPlayAndExplain() {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: const Text('还没有可用的音源脚本，无法取到播放地址'),
@@ -67,182 +74,255 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     ));
   }
 
+  /// 统一的"播放一组歌曲"，集中处理取链能力检查，避免每个列表各写一遍。
+  void _playAll(List<MusicInfo> songs, {int index = 0}) {
+    if (songs.isEmpty) return;
+    if (!_canPlay()) {
+      _blockPlayAndExplain();
+      return;
+    }
+    ref.read(playerCoreProvider).setQueue([
+      for (final m in songs)
+        PlayerItem(
+          title: m.title,
+          artist: m.artist,
+          sourceId: m.sourceId,
+          musicId: m.musicId,
+          album: m.album?.name,
+          artUri: (m.album?.picUrl == null || m.album!.picUrl!.isEmpty)
+              ? null
+              : Uri.tryParse(m.album!.picUrl!),
+          duration: m.duration,
+          raw: m.raw,
+        ),
+    ], index: index);
+    Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const PlayerPage()));
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _refreshTick++);
+    // 给子块时间发起请求，让下拉动画不会"瞬时结束"。
+    await Future<void>.delayed(const Duration(milliseconds: 650));
+  }
+
+  /// 玻璃需要一张背景：用主色系的深色渐变，避免纯色下玻璃失去折射。
+  Widget _background(ColorScheme scheme) => DecoratedBox(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Color.alphaBlend(
+                  scheme.primary.withValues(alpha: 0.22), scheme.surface),
+              Color.alphaBlend(
+                  scheme.tertiary.withValues(alpha: 0.14), scheme.surface),
+              scheme.surface,
+            ],
+          ),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
-    final core = ref.watch(playerCoreProvider);
-    // 「能不能播」与「有没有内容」是两件事：
-    //   发现页的搜索/榜单/歌词/评论全部来自**内置接口**，零脚本也有内容
-    //   但取链（musicUrl）**只走 lx 脚本**（合规：壳不内置取链）
-    // 所以要显式区分这两种状态，否则用户会以为点一下就能听。
+    final scheme = Theme.of(context).colorScheme;
     final registry = ref.watch(sourceRegistryProvider);
-    final canPlay = registry.enabledRuntimes
-        .any((r) => r.actions.contains('musicUrl'));
-    final enabledCount =
-        registry.installed.where((s) => s.enabled).length;
+    final canPlay =
+        registry.enabledRuntimes.any((r) => r.actions.contains('musicUrl'));
+    final enabledCount = registry.installed.where((s) => s.enabled).length;
+    final multiSource = enabledCount > 1;
 
+    return GlassScaffold(
+      background: _background(scheme),
+      // edgeToEdge + 玻璃 AppBar：顶栏悬浮在内容上，滚动时内容从玻璃下穿过
+      edgeToEdge: true,
+      statusBarStyle: GlassStatusBarStyle.auto,
+      // extendBody 默认 true 会让正文顶到玻璃 AppBar 下方（iOS 26 风格），
+      // 实测会导致搜索栏和标题叠在一起（搜索栏 y=22-162、标题 y=112-189）。
+      // 我们的正文是 ListView 自己整体上滑的，这里必须关掉，
+      // 让正文精确排在 AppBar 下方。
+      extendBody: false,
+      appBar: const GlassAppBar(
+        title: Text('发现'),
+        centerTitle: false,
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refresh,
+        edgeOffset: 64,
+        child: CustomScrollView(
+          key: const PageStorageKey<String>('discover-scroll'),
+          physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics(),
+          ),
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              sliver: SliverList.list(children: [
+                // —— 玻璃搜索栏 ——
+                _GlassSearchBar(onTap: widget.onOpenSearch),
 
+                // —— 无可用脚本时的说明条 ——
+                if (!canPlay) ...[
+                  const SizedBox(height: 12),
+                  _NoSourceNotice(enabledCount: enabledCount),
+                ],
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('发现')),
-      body: ListView(children: [
-        // —— 顶部搜索栏 ——
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: InkWell(
-            key: const ValueKey('discover_search_bar'),
-            borderRadius: BorderRadius.circular(12),
-            onTap: widget.onOpenSearch,
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(children: [
-                Icon(Icons.search,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .onSurfaceVariant),
-                const SizedBox(width: 8),
-                Text('搜索歌曲 / 歌手',
-                    style: TextStyle(
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurfaceVariant)),
+                // —— 音源切换（多源时）——
+                if (multiSource) ...[
+                  const SizedBox(height: 12),
+                  _SourceSelector(
+                    selectedId: _effectiveSourceId(),
+                    onSelect: (id) => setState(() => _selectedSourceId = id),
+                  ),
+                ],
+
+                // —— 每日推荐 ——
+                const SizedBox(height: 16),
+                _DailyRecommendCard(
+                  key: ValueKey('daily-$_refreshTick'),
+                  onPlayAll: (songs) => _playAll(songs),
+                ),
+
+                // —— 排行榜 ——
+                const _SectionHeader('排行榜', subtitle: '各平台实时热榜'),
+                _BuiltinBoardRow(
+                  selectedSource: _boardSource,
+                  onSelect: (v) => setState(() => _boardSource = v),
+                ),
+                const SizedBox(height: 8),
+                _BuiltinHotSongs(
+                  key: ValueKey('board-$_boardSource-$_refreshTick'),
+                  sourceId: _boardSource,
+                  board: BuiltinBoards.catalog[_boardSource]!.first,
+                  onPlay: (songs, i) => _playAll(songs, index: i),
+                ),
+
+                // —— 精选歌单（新增）——
+                const _SectionHeader('精选歌单', subtitle: '按平台分类浏览'),
+                _FeaturedPlaylists(
+                  key: ValueKey('featured-$_refreshTick'),
+                  initialSource: _boardSource,
+                ),
+
+                const SizedBox(height: 32),
               ]),
             ),
-          ),
+          ],
         ),
-        // —— 无可用脚本时的说明条 ——
-        // 内置接口能提供浏览内容，但没有脚本就无法取到播放地址。
-        // 与其让用户点下去等 2ms 才报「资源失效」，不如提前说清楚。
-        if (!canPlay)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-              decoration: BoxDecoration(
-                color: Theme.of(context)
-                    .colorScheme
-                    .secondaryContainer
-                    .withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(children: [
-                Icon(Icons.info_outline,
-                    size: 18,
-                    color: Theme.of(context).colorScheme.onSecondaryContainer),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    enabledCount == 0
-                        ? '这里的榜单与推荐来自内置接口，可以浏览；'
-                            '播放需要在「我的 › 音源管理」导入脚本。'
-                        : '已启用 $enabledCount 个音源，但都未提供取链能力；'
-                            '播放需要支持取链的脚本。',
-                    style: TextStyle(
-                        fontSize: 12,
-                        height: 1.35,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSecondaryContainer),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                          builder: (_) => const SourceManagePage())),
-                  child: const Text('去导入', style: TextStyle(fontSize: 12)),
-                ),
-              ]),
+      ),
+    );
+  }
+}
+
+/// 玻璃搜索栏：点击进入搜索页。
+class _GlassSearchBar extends StatelessWidget {
+  const _GlassSearchBar({this.onTap});
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      button: true,
+      label: '搜索歌曲或歌手',
+      child: GlassContainer(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        child: GlassTap(
+          tapKey: const ValueKey('discover_search_bar'),
+          borderRadius: 14,
+          onTap: onTap,
+          child: Row(children: [
+            Icon(Icons.search, size: 20, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Text(
+              '搜索歌曲 / 歌手',
+              style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
             ),
-          ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
 
-        // —— 音源切换（榜单由脚本提供，多源时可切）——
-        if ((ref.watch(sourceRegistryProvider).installed.where((s) => s.enabled).length) > 1)
-          _SourceSelector(
-            selectedId: _effectiveSourceId(),
-            onSelect: (id) => setState(() => _selectedSourceId = id),
-          ),
-        // —— 每日推荐（真实曲目：多歌手种子 → 各平台取曲 → 去重混排）——
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-          child: _DailyRecommendCard(
-            onPlayAll: (songs) {
-              if (songs.isEmpty) return;
-              if (!_canPlay()) {
-                _blockPlayAndExplain();
-                return;
-              }
-              core.setQueue([
-                for (final m in songs)
-                  PlayerItem(
-                    title: m.title,
-                    artist: m.artist,
-                    sourceId: m.sourceId,
-                    musicId: m.musicId,
-                    album: m.album?.name,
-                    artUri: (m.album?.picUrl == null ||
-                            m.album!.picUrl!.isEmpty)
-                        ? null
-                        : Uri.tryParse(m.album!.picUrl!),
-                    duration: m.duration,
-                    raw: m.raw,
-                  ),
-              ], index: 0);
-              Navigator.of(context).push(MaterialPageRoute<void>(
-                  builder: (_) => const PlayerPage()));
-            },
-          ),
-        ),
-        // —— 排行榜：**内置五平台**（不依赖 lx 脚本）——
-        //
-        // 之前完全依赖脚本 boardList，脚本后端一失效榜单就整块消失
-        // （用户遇到的 sayqz 域名 NXDOMAIN 就是这种情况）。
-        // 现在用各平台官方榜单接口，脚本只作为额外补充。
-        const _SectionHeader('排行榜'),
-        _BuiltinBoardRow(
-          selectedSource: _boardSource,
-          onSelect: (v) => setState(() => _boardSource = v),
-        ),
-        _BuiltinHotSongs(
-          sourceId: _boardSource,
-          board: BuiltinBoards.catalog[_boardSource]!.first,
-        ),
+/// 无取链脚本时的说明条。内置接口能浏览，但播放需要脚本。
+class _NoSourceNotice extends StatelessWidget {
+  const _NoSourceNotice({required this.enabledCount});
+  final int enabledCount;
 
-        // 注：「我的歌单」与「继续聆听」已移到「曲库」Tab。
-        // 发现页职责 = 纯推荐（每日推荐 / 排行榜 / 今日热门），
-        // 避免推荐流里混入"我自己的内容"。
-        const SizedBox(height: 24),
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GlassContainer(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 14),
+      padding: const EdgeInsets.fromLTRB(14, 11, 8, 11),
+      child: Row(children: [
+        Icon(Icons.info_outline, size: 18, color: scheme.primary),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            enabledCount == 0
+                ? '榜单与推荐来自内置接口，可以浏览；播放需在「我的 › 音源管理」导入脚本。'
+                : '已启用 $enabledCount 个音源，但都没有取链能力；播放需支持取链的脚本。',
+            style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: scheme.onSurfaceVariant),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const SourceManagePage())),
+          child: const Text('去导入', style: TextStyle(fontSize: 12)),
+        ),
       ]),
     );
   }
-
 }
 
+/// 区块标题。带副标题时上下留白更紧凑，避免两个标题挤在一起。
 class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.title);
+  const _SectionHeader(this.title, {this.subtitle});
   final String title;
+  final String? subtitle;
 
   @override
-  Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
-        child: Text(title,
-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-      );
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(2, 24, 2, 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 16)),
+                if (subtitle != null) ...[
+                  const SizedBox(height: 2),
+                  Text(subtitle!,
+                      style: TextStyle(
+                          fontSize: 11.5, color: scheme.onSurfaceVariant)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-/// 每日推荐卡片：真实曲目（多歌手种子 → 各平台取曲 → 去重混排）。
+/// 每日推荐玻璃卡片。
 ///
-/// 此前这里播放的是内置 demo 和弦音（asset:///assets/audio/demo_c.wav），
-/// 是明确的假功能。内置五平台没有官方"每日推荐"接口，
-/// 因此用种子歌手构造真实可播列表。
+/// 原来是一张写死的紫蓝渐变，与主题无关；现在改成玻璃材质 + 主题色，
+/// 内容区仍是真实曲目（多歌手种子 → 各平台取曲 → 去重混排）。
 class _DailyRecommendCard extends StatefulWidget {
-  const _DailyRecommendCard({required this.onPlayAll});
+  const _DailyRecommendCard({required this.onPlayAll, super.key});
   final void Function(List<MusicInfo> songs) onPlayAll;
 
   @override
@@ -260,6 +340,7 @@ class _DailyRecommendCardState extends State<_DailyRecommendCard> {
   }
 
   Future<void> _load() async {
+    setState(() => _loading = true);
     final songs = await DailyRecommend.fetchOrOverride();
     if (!mounted) return;
     setState(() {
@@ -270,115 +351,103 @@ class _DailyRecommendCardState extends State<_DailyRecommendCard> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final songs = _songs ?? const <MusicInfo>[];
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF5B8DEF), Color(0xFF8B5CF6), Color(0xFFE0A3C8)],
-          ),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return GlassContainer(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 20),
+      padding: const EdgeInsets.all(18),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            width: 34,
+            height: 34,
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.25),
-              borderRadius: BorderRadius.circular(20),
+              shape: BoxShape.circle,
+              color: scheme.primary.withValues(alpha: 0.15),
             ),
-            child: Text(
-              _loading
-                  ? '每日推荐 · 正在挑选'
-                  : (songs.isEmpty
-                      ? '每日推荐 · 暂无数据'
-                      : '每日推荐 · ${songs.length} 首'),
-              style: const TextStyle(color: Colors.white, fontSize: 11),
+            child: Icon(Icons.auto_awesome, size: 18, color: scheme.primary),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('每日推荐',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w700)),
+                Text(
+                  _loading
+                      ? '正在挑选…'
+                      : (songs.isEmpty
+                          ? '暂时拿不到推荐'
+                          : '${songs.length} 首 · 按你的口味混排'),
+                  style: TextStyle(
+                      fontSize: 11.5, color: scheme.onSurfaceVariant),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 10),
+          if (!_loading && songs.isNotEmpty)
+            IconButton(
+              tooltip: '换一批',
+              onPressed: _load,
+              icon: Icon(Icons.refresh, size: 18,
+                  color: scheme.onSurfaceVariant),
+            ),
+        ]),
 
-          // 推荐内容预览：显示前 3 首真实曲目（而不是空泛口号）
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 6),
-              child: Text('正在从各平台挑选今天的歌…',
-                  style: TextStyle(color: Colors.white70, fontSize: 13)),
-            )
-          else if (songs.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('暂时拿不到推荐',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                Text('音源可能不可用，稍后重试',
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.8),
-                        fontSize: 12)),
-              ]),
-            )
-          else ...[
-            for (final m in songs.take(3))
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(children: [
-                  const Icon(Icons.music_note, size: 13, color: Colors.white70),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      '${m.title} · ${m.artist}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 12.5),
-                    ),
-                  ),
-                ]),
-              ),
-          ],
-
+        if (_loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: LinearProgressIndicator(minHeight: 2),
+          )
+        else if (songs.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text('音源可能不可用，稍后下拉刷新重试',
+                style: TextStyle(
+                    fontSize: 12.5, color: scheme.onSurfaceVariant)),
+          )
+        else ...[
           const SizedBox(height: 12),
+          for (final m in songs.take(3))
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(children: [
+                Icon(Icons.music_note,
+                    size: 14, color: scheme.primary.withValues(alpha: 0.7)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${m.title} · ${m.artist}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5),
+                  ),
+                ),
+              ]),
+            ),
+          const SizedBox(height: 14),
           Row(children: [
             FilledButton.icon(
-              onPressed: songs.isEmpty ? null : () => widget.onPlayAll(songs),
+              onPressed: () => widget.onPlayAll(songs),
               icon: const Icon(Icons.play_arrow, size: 20),
-              label: Text(songs.isEmpty ? '暂不可播' : '播放全部'),
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: const Color(0xFF5B5FEF),
-                disabledBackgroundColor: Colors.white.withValues(alpha: 0.4),
-              ),
+              label: const Text('播放全部'),
             ),
-            const SizedBox(width: 10),
-            if (songs.isNotEmpty)
-              TextButton.icon(
-                onPressed: _load,
-                icon: Icon(Icons.refresh,
-                    size: 16, color: Colors.white.withValues(alpha: 0.9)),
-                label: Text('换一批',
-                    style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 12)),
-              ),
+            const Spacer(),
+            Text(
+              songs.isEmpty ? '' : '共 ${songs.length} 首',
+              style: TextStyle(fontSize: 11.5, color: scheme.onSurfaceVariant),
+            ),
           ]),
-        ]),
-      ),
+        ],
+      ]),
     );
   }
 }
 
-/// 今日热门：脚本首榜 Top10（零内置源，能力由导入脚本声明）。
-
-/// 音源分段选择器（对齐栖弦 DiscoverySourceSelector 的胶囊样式）。
-/// 横向可滚动，左侧滑块跟随选中项；源多时不挤压布局。
+/// 音源分段选择器（多脚本时的源切换）。
 class _SourceSelector extends ConsumerWidget {
   const _SourceSelector({required this.selectedId, required this.onSelect});
   final String? selectedId;
@@ -394,20 +463,18 @@ class _SourceSelector extends ConsumerWidget {
         .toList();
     if (installed.length < 2) return const SizedBox.shrink();
 
-    // 高度必须 >= 48：胶囊自身内边距让它只有 31dp 高，
-    // 外层若再限制在 42，可点区就更小（实测难命中）。
+    // 高度 >= 48：胶囊自身内边距让它只有 31dp 高，外层再压缩就难点中。
     return SizedBox(
       height: 48,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         itemCount: installed.length,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final s = installed[i];
           final active = s.id == selectedId;
-          return InkWell(
-            borderRadius: BorderRadius.circular(20),
+          return GlassTap(
+            borderRadius: 20,
             onTap: () => onSelect(s.id),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
@@ -451,29 +518,31 @@ class _BuiltinBoardRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final ids = BuiltinBoards.catalog.keys.toList();
-    // 同音源胶囊：容器高度要给足，否则胶囊自身 29dp 的可点区
-    // 会被 40 的容器进一步压缩（实测点击经常落空）。
     return SizedBox(
-      height: 48,
+      height: 44,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: ids.length,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final id = ids[i];
           final active = id == selectedSource;
-          return InkWell(
-            borderRadius: BorderRadius.circular(18),
+          return GlassTap(
+            borderRadius: 18,
             onTap: () => onSelect(id),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
               decoration: BoxDecoration(
                 color: active
-                    ? scheme.secondaryContainer
-                    : scheme.surfaceContainerHighest,
+                    ? scheme.primary.withValues(alpha: 0.16)
+                    : Colors.transparent,
                 borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: active
+                      ? scheme.primary.withValues(alpha: 0.4)
+                      : scheme.outlineVariant.withValues(alpha: 0.5),
+                ),
               ),
               child: Center(
                 child: Text(
@@ -481,9 +550,7 @@ class _BuiltinBoardRow extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                    color: active
-                        ? scheme.onSecondaryContainer
-                        : scheme.onSurfaceVariant,
+                    color: active ? scheme.primary : scheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -495,11 +562,20 @@ class _BuiltinBoardRow extends StatelessWidget {
   }
 }
 
-/// 内置榜单的曲目列表（真实可播，不依赖脚本）。
+/// 内置榜单曲目列表（真实可播，不依赖脚本）。
+///
+/// 改进点：前 3 名用奖牌色序号；整行玻璃卡片化；加载用骨架屏代替
+/// 居中转圈（转圈会把下面的版块顶下去，滚动时抖动明显）。
 class _BuiltinHotSongs extends ConsumerStatefulWidget {
-  const _BuiltinHotSongs({required this.sourceId, required this.board});
+  const _BuiltinHotSongs({
+    required this.sourceId,
+    required this.board,
+    required this.onPlay,
+    super.key,
+  });
   final String sourceId;
   final MusicBoard board;
+  final void Function(List<MusicInfo> songs, int index) onPlay;
 
   @override
   ConsumerState<_BuiltinHotSongs> createState() => _BuiltinHotSongsState();
@@ -540,81 +616,317 @@ class _BuiltinHotSongsState extends ConsumerState<_BuiltinHotSongs> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+
     if (_loading) {
-      return const Padding(
-        padding: EdgeInsets.all(24),
-        child: Center(child: CircularProgressIndicator()),
-      );
+      // 骨架屏：占位高度与真实行一致，加载完成不再跳版。
+      return Column(children: [
+        for (var i = 0; i < 6; i++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Container(
+              height: 52,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+      ]);
     }
+
     final songs = _songs ?? const <MusicInfo>[];
     if (songs.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Text('榜单暂时取不到（平台接口波动）',
-            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+      return GlassContainer(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 14),
+        padding: const EdgeInsets.all(16),
+        child: Row(children: [
+          Icon(Icons.cloud_off, size: 18, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text('榜单暂时取不到（平台接口波动），下拉可重试',
+                style: TextStyle(
+                    fontSize: 12.5, color: scheme.onSurfaceVariant)),
+          ),
+        ]),
       );
     }
-    return Column(children: [
-      for (var i = 0; i < songs.length && i < 10; i++)
-        ListTile(
-          dense: true,
-          leading: SizedBox(
-            width: 24,
-            child: Text('${i + 1}',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: i < 3 ? scheme.primary : scheme.onSurfaceVariant)),
+
+    return GlassContainer(
+      shape: const LiquidRoundedSuperellipse(borderRadius: 18),
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(children: [
+        for (var i = 0; i < songs.length && i < 10; i++)
+          _BoardRow(
+            index: i,
+            song: songs[i],
+            onTap: () => widget.onPlay(songs, i),
           ),
-          title: Text(songs[i].title,
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text(songs[i].artist,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11)),
-          trailing: Icon(Icons.play_arrow, size: 18, color: scheme.primary),
-          onTap: () {
-            final items = [
-              for (final m in songs)
-                PlayerItem(
-                  title: m.title,
-                  artist: m.artist,
-                  sourceId: m.sourceId,
-                  musicId: m.musicId,
-                  album: m.album?.name,
-                  artUri: (m.album?.picUrl == null || m.album!.picUrl!.isEmpty)
-                      ? null
-                      : Uri.tryParse(m.album!.picUrl!),
-                  duration: m.duration,
-                  raw: m.raw,
+      ]),
+    );
+  }
+}
+
+/// 榜单单行。前三名序号用金/银/铜，其余用次要色。
+class _BoardRow extends StatelessWidget {
+  const _BoardRow({required this.index, required this.song, required this.onTap});
+  final int index;
+  final MusicInfo song;
+  final VoidCallback onTap;
+
+  static const _medal = [Color(0xFFE6A23C), Color(0xFFA8B0BC), Color(0xFFC98A5B)];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final rank = index + 1;
+    final rankColor =
+        index < 3 ? _medal[index] : scheme.onSurfaceVariant.withValues(alpha: 0.7);
+
+    return GlassTap(
+      borderRadius: 10,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        child: Row(children: [
+          SizedBox(
+            width: 24,
+            child: Text(
+              '$rank',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: index < 3 ? 15 : 12.5,
+                fontWeight: index < 3 ? FontWeight.w800 : FontWeight.w500,
+                color: rankColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(song.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 13.5, fontWeight: FontWeight.w500)),
+                const SizedBox(height: 1),
+                Text(song.artist,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 11, color: scheme.onSurfaceVariant)),
+              ],
+            ),
+          ),
+          Icon(Icons.play_arrow_rounded,
+              size: 20, color: scheme.primary.withValues(alpha: 0.75)),
+        ]),
+      ),
+    );
+  }
+}
+
+/// 精选歌单：平台分类切换 + 2 列网格。
+///
+/// 这是相对栖弦补上的版块——我们之前只有榜单，没有"逛歌单"的入口。
+/// 数据走 CatalogSdk.search(type: playlist)，五平台都有。
+class _FeaturedPlaylists extends ConsumerStatefulWidget {
+  const _FeaturedPlaylists({required this.initialSource, super.key});
+  final String initialSource;
+
+  @override
+  ConsumerState<_FeaturedPlaylists> createState() => _FeaturedPlaylistsState();
+}
+
+class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
+  /// 只有网易和酷我提供可用的歌单分类接口（CatalogSdk 实测结论），
+  /// 所以这里不能跟着五平台榜单走，否则另外三家点进去永远是空态。
+  static const _supported = FeaturedPlaylists.supportedSources;
+
+  late String _source =
+      _supported.contains(widget.initialSource) ? widget.initialSource : 'wy';
+  List<CatalogHit>? _items;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _items = null;
+    });
+    final list = await FeaturedPlaylists.fetch(source: _source);
+    if (!mounted) return;
+    setState(() {
+      _items = list;
+      _loading = false;
+    });
+  }
+
+  void _select(String id) {
+    if (id == _source) return;
+    setState(() => _source = id);
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      SizedBox(
+        height: 44,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _supported.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
+          itemBuilder: (context, i) {
+            final id = _supported[i];
+            final active = id == _source;
+            return GlassTap(
+              borderRadius: 18,
+              onTap: () => _select(id),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: active
+                      ? scheme.primary.withValues(alpha: 0.16)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: active
+                        ? scheme.primary.withValues(alpha: 0.4)
+                        : scheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
                 ),
-            ];
-            // 没有可用取链脚本时不要进播放页：
-            // 进去只会拿到"资源失效"红条，用户不知道真正原因。
-            final canPlay = ref
-                .read(sourceRegistryProvider)
-                .enabledRuntimes
-                .any((r) => r.actions.contains('musicUrl'));
-            if (!canPlay) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                content: const Text('还没有可用的音源脚本，无法取到播放地址'),
-                behavior: SnackBarBehavior.floating,
-                duration: const Duration(seconds: 3),
-                action: SnackBarAction(
-                  label: '去导入',
-                  onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                          builder: (_) => const SourceManagePage())),
+                child: Center(
+                  child: Text(
+                    BuiltinBoards.labels[id] ?? id,
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight:
+                          active ? FontWeight.bold : FontWeight.normal,
+                      color: active ? scheme.primary : scheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
-              ));
-              return;
-            }
-            ref.read(playerCoreProvider).setQueue(items, index: i);
-            Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => const PlayerPage()));
+              ),
+            );
           },
         ),
+      ),
+      const SizedBox(height: 10),
+      if (_loading)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 28),
+          child: Center(child: CircularProgressIndicator()),
+        )
+      else if ((_items ?? const <CatalogHit>[]).isEmpty)
+        GlassContainer(
+          shape: const LiquidRoundedSuperellipse(borderRadius: 14),
+          padding: const EdgeInsets.all(16),
+          child: Row(children: [
+            Icon(Icons.library_music_outlined,
+                size: 18, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text('这个平台的歌单接口暂时没有返回内容，换个平台试试',
+                  style: TextStyle(
+                      fontSize: 12.5, color: scheme.onSurfaceVariant)),
+            ),
+          ]),
+        )
+      else
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: EdgeInsets.zero,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.42,
+          ),
+          itemCount: _items!.length,
+          itemBuilder: (context, i) =>
+              _PlaylistTile(hit: _items![i], source: _source),
+        ),
     ]);
+  }
+}
+
+/// 歌单卡片：封面 + 名称 + 副标题。
+class _PlaylistTile extends StatelessWidget {
+  const _PlaylistTile({required this.hit, required this.source});
+  final CatalogHit hit;
+  final String source;
+
+  void _open(BuildContext context) {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => OnlinePlaylistPage(
+        source: source,
+        playlistId: hit.id,
+        title: hit.title,
+        coverUrl: hit.picUrl,
+      ),
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GlassTap(
+      borderRadius: 14,
+      onTap: () => _open(context),
+      child: GlassContainer(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 14),
+        padding: const EdgeInsets.all(10),
+        child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(9),
+              child: (hit.picUrl == null || hit.picUrl!.isEmpty)
+                  ? Container(
+                      color: scheme.surfaceContainerHighest,
+                      child: Icon(Icons.queue_music,
+                          size: 22, color: scheme.onSurfaceVariant),
+                    )
+                  : Image.network(
+                      hit.picUrl!,
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      errorBuilder: (_, _, _) => Container(
+                        color: scheme.surfaceContainerHighest,
+                        child: Icon(Icons.queue_music,
+                            size: 22, color: scheme.onSurfaceVariant),
+                      ),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(hit.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  fontSize: 12.5, fontWeight: FontWeight.w600)),
+          if (hit.subtitle.isNotEmpty)
+            Text(hit.subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 10.5, color: scheme.onSurfaceVariant)),
+          ],
+        ),
+      ),
+    );
   }
 }
