@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart' hide RepeatMode;
@@ -9,6 +10,8 @@ import '../../app_providers.dart';
 import '../../core/models/quality.dart';
 import '../../core/services/comment_paging.dart' show CommentErrorKind;
 import '../../core/ui/cover_palette.dart';
+import '../../core/ui/cover_source.dart';
+import '../../core/ui/spinning_cover.dart';
 import '../../sources/builtin/instrumental_finder.dart';
 import '../../player/models.dart';
 import 'lyrics_view.dart';
@@ -33,15 +36,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
   String? _paletteKey;
 
   /// 封面变化时重新取色（用 key 去重，避免每帧重算）。
-  void _syncPalette(String? artUrl) {
-    if (artUrl == _paletteKey) return;
-    _paletteKey = artUrl;
-    if (artUrl == null || artUrl.isEmpty) {
+  void _syncPalette(String? artUrl, [Uint8List? bytes]) {
+    final key = bytes != null
+        ? 'bytes:${bytes.length}:$artUrl'
+        : artUrl;
+    if (key == _paletteKey) return;
+    _paletteKey = key;
+    Future<Color?> future;
+    if (bytes != null && bytes.isNotEmpty) {
+      future = CoverPalette.extractBytes(bytes);
+    } else if (artUrl != null && artUrl.isNotEmpty) {
+      future = CoverPalette.extract(artUrl);
+    } else {
       if (_coverColor != null) setState(() => _coverColor = null);
       return;
     }
-    CoverPalette.extract(artUrl).then((c) {
-      if (!mounted || artUrl != _paletteKey) return;
+    future.then((c) {
+      if (!mounted || key != _paletteKey) return;
       if (c != null) setState(() => _coverColor = c);
     });
   }
@@ -131,7 +142,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
               // 恢复播放后重置去重标记：下次真失败仍要能弹出
               if (s.error == null && s.playing) _lastShownError = null;
               // 封面变化 → 重新提取主色（动态主题 + 背景模糊）
-              _syncPalette(item?.artUri?.toString());
+              _syncPalette(item?.artUri?.toString(), item?.artBytes);
 
               final duration =
                   s.duration ?? const Duration(minutes: 3, seconds: 30);
@@ -142,8 +153,9 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                 children: [
                   // 封面模糊背景 + 主色渐变（规格 §2.4「播放页背景」）
                   Positioned.fill(
-                    child: _CoverBackdrop(
+                    child:                   _CoverBackdrop(
                       artUrl: item?.artUri?.toString(),
+                      artBytes: item?.artBytes,
                       accent: accent,
                     ),
                   ),
@@ -317,19 +329,23 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
                             child: LayoutBuilder(
                               builder: (context, c) {
                                 if (c.maxWidth <= 900) {
-                                  return _PlayerTabs(item: item);
+                                return _PlayerTabs(item: item, playing: s.playing);
                                 }
                                 return Row(
                                   children: [
                                     Expanded(
                                       flex: 4,
-                                      child: _WideCoverPane(item: item),
+                                      child: _WideCoverPane(
+                                        item: item,
+                                        playing: s.playing,
+                                      ),
                                     ),
                                     const VerticalDivider(width: 24),
                                     Expanded(
                                       flex: 5,
                                       child: _PlayerTabs(
                                         item: item,
+                                        playing: s.playing,
                                         wideMode: true,
                                       ),
                                     ),
@@ -806,8 +822,13 @@ class _SeekBarState extends State<_SeekBar> {
 /// 播放页上半区：封面 / 歌词 / 评论，左右滑动切换（PageView），
 /// 页面指示点同步高亮；底部操作区不受影响。
 class _PlayerTabs extends ConsumerStatefulWidget {
-  const _PlayerTabs({required this.item, this.wideMode = false});
+  const _PlayerTabs({
+    required this.item,
+    this.playing = false,
+    this.wideMode = false,
+  });
   final PlayerItem? item;
+  final bool playing;
 
   /// 宽屏模式：封面已由左侧栏独立展示，这里只保留 歌词 / 评论 两页。
   final bool wideMode;
@@ -829,6 +850,7 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final round = ref.watch(appSettingsProvider).coverShape == 'round';
     // children 数量必须在拖动全程稳定。
     //
     // 真机取证：拖动中途切歌 → item 变化 → 页数 3→1 → Scrollable 重建
@@ -844,7 +866,7 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
             const _CommentsPage(),
           ]
         : <Widget>[
-            _coverPage(scheme),
+            _coverPage(scheme, widget.playing, round),
             const ClipRRect(
               borderRadius: BorderRadius.all(Radius.circular(20)),
               child: LyricsPanel(compact: false),
@@ -889,62 +911,38 @@ class _PlayerTabsState extends ConsumerState<_PlayerTabs> {
     );
   }
 
-  Widget _coverPage(ColorScheme scheme) {
+  Widget _coverPage(ColorScheme scheme, bool playing, bool round) {
     final item = widget.item;
-    return InkWell(
-      borderRadius: BorderRadius.circular(20),
-      // 封面点击 = 当前歌曲操作菜单（对齐参考工程 player_cover_actions_sheet）
-      onTap: item == null
-          ? null
-          : () => _showCoverActions(context, ref, item, () {
-              _controller.animateToPage(
-                1,
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeOut,
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: GestureDetector(
+            onTap: item == null
+                ? null
+                : () => _showCoverActions(
+                      context,
+                      ref,
+                      item,
+                      () => _controller.animateToPage(
+                        1,
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOut,
+                      ),
+                    ),
+            child: LayoutBuilder(builder: (context, box) {
+              final diameter = math.min(box.maxWidth, box.maxHeight);
+              return SpinningCover(
+                size: diameter,
+                playing: playing,
+                round: round,
+                uri: item?.artUri,
+                bytes: item?.artBytes,
               );
             }),
-      child: Container(
-        width: double.infinity,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [scheme.primary, const Color(0xFF8B5CF6), scheme.tertiary],
           ),
         ),
-        child: (item?.artBytes?.isNotEmpty ?? false)
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Image.memory(
-                  item!.artBytes!,
-                  fit: BoxFit.cover,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, _, _) => Icon(
-                    Icons.graphic_eq,
-                    size: 60,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
-              )
-            : item?.artUri != null
-            ? ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: Image.network(
-                  item!.artUri.toString(),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, _, _) => Icon(
-                    Icons.graphic_eq,
-                    size: 60,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                ),
-              )
-            : Icon(
-                Icons.graphic_eq,
-                size: 60,
-                color: Colors.white.withValues(alpha: 0.85),
-              ),
       ),
     );
   }
@@ -1288,69 +1286,29 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
 
 /// 宽屏左栏封面（桌面/平板横屏）：封面独立展示，点击弹操作菜单。
 class _WideCoverPane extends ConsumerWidget {
-  const _WideCoverPane({required this.item});
+  const _WideCoverPane({required this.item, this.playing = false});
   final PlayerItem? item;
+  final bool playing;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final scheme = Theme.of(context).colorScheme;
-    final art = item?.artUri;
+    final round = ref.watch(appSettingsProvider).coverShape == 'round';
     return Center(
-      child: AspectRatio(
-        aspectRatio: 1,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(24),
+      child: LayoutBuilder(builder: (context, box) {
+        final diameter = math.min(box.maxWidth, box.maxHeight) * 0.9;
+        return GestureDetector(
           onTap: item == null
               ? null
               : () => _showCoverActions(context, ref, item!, () {}),
-          child: Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(24),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  scheme.primary,
-                  const Color(0xFF8B5CF6),
-                  scheme.tertiary,
-                ],
-              ),
-            ),
-            child: (item?.artBytes?.isNotEmpty ?? false)
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Image.memory(
-                      item!.artBytes!,
-                      fit: BoxFit.cover,
-                      gaplessPlayback: true,
-                      errorBuilder: (_, _, _) => Icon(
-                        Icons.graphic_eq,
-                        size: 72,
-                        color: Colors.white.withValues(alpha: 0.85),
-                      ),
-                    ),
-                  )
-                : art != null
-                ? ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Image.network(
-                      art.toString(),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => Icon(
-                        Icons.graphic_eq,
-                        size: 72,
-                        color: Colors.white.withValues(alpha: 0.85),
-                      ),
-                    ),
-                  )
-                : Icon(
-                    Icons.graphic_eq,
-                    size: 72,
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
+          child: SpinningCover(
+            size: diameter,
+            playing: playing,
+            round: round,
+            uri: item?.artUri,
+            bytes: item?.artBytes,
           ),
-        ),
-      ),
+        );
+      }),
     );
   }
 }
@@ -1358,14 +1316,21 @@ class _WideCoverPane extends ConsumerWidget {
 /// 播放页背景：封面高斯模糊 + 主色渐变遮罩。
 /// 无封面时退化为纯主色渐变（不留空白）。
 class _CoverBackdrop extends StatelessWidget {
-  const _CoverBackdrop({required this.artUrl, required this.accent});
+  const _CoverBackdrop({
+    required this.artUrl,
+    required this.accent,
+    this.artBytes,
+  });
   final String? artUrl;
+  final Uint8List? artBytes;
   final Color accent;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final hasArt = artUrl != null && artUrl!.isNotEmpty;
+    final bytes = artBytes;
+    final hasArt = (bytes != null && bytes.isNotEmpty) ||
+        (artUrl != null && artUrl!.isNotEmpty);
     final veil = PlayerBackdropVeil.of(
       brightness: scheme.brightness,
       hasArt: hasArt,
@@ -1391,8 +1356,14 @@ class _CoverBackdrop extends StatelessWidget {
               sigmaY: 64,
               tileMode: TileMode.decal,
             ),
-            child: Image.network(
-              artUrl!,
+            child: (bytes != null && bytes.isNotEmpty)
+                ? Image.memory(bytes,
+                    fit: BoxFit.cover,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, _, _) => const SizedBox.shrink())
+                : Image.network(
+              CoverSource.normalize(artUrl) ?? artUrl!,
+              headers: CoverSource.headers(artUrl),
               fit: BoxFit.cover,
               // 封面色块放大铺满，避免边缘露出黑边
               alignment: Alignment.center,

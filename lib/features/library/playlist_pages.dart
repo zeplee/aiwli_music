@@ -80,6 +80,9 @@ class _PlaylistDetailPageState extends ConsumerState<PlaylistDetailPage> {
           sourceId: e.sourceId,
           musicId: e.musicId,
           album: e.album,
+          artUri: (e.picUrl == null || e.picUrl!.isEmpty)
+              ? null
+              : Uri.tryParse(e.picUrl!),
           duration: e.durationMs != null
               ? Duration(milliseconds: e.durationMs!)
               : null,

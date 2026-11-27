@@ -43,6 +43,9 @@ class AppSettings extends SafeNotifier {
   /// 用户想固定昼夜时在设置里改。
   String themeMode = 'system';
 
+  /// 封面形状：round = 黑胶圆形旋转；square = 方形静止。
+  String coverShape = 'round';
+
   /// 搜索与下载偏好（集中校验 + 导入导出，见 SettingsPrefs）。
   SettingsPrefs prefs = const SettingsPrefs();
 
@@ -73,6 +76,8 @@ class AppSettings extends SafeNotifier {
     showMiniLyrics = m['showMiniLyrics'] == true;
     final tm = m['themeMode']?.toString();
     if (tm == 'system' || tm == 'light' || tm == 'dark') themeMode = tm!;
+    final shape = m['coverShape']?.toString();
+    if (shape == 'round' || shape == 'square') coverShape = shape!;
     final dirs = m['localMusicDirs'] as List?;
     if (dirs != null) {
       localMusicDirs = dirs.whereType<String>().toList();
@@ -98,6 +103,7 @@ class AppSettings extends SafeNotifier {
         'lyricAlignStart': lyricAlignStart,
         'showMiniLyrics': showMiniLyrics,
         'themeMode': themeMode,
+        'coverShape': coverShape,
         'localMusicDirs': localMusicDirs,
         'sleepTimerMinutes': sleepTimerMinutes,
         'songSort': songSort,
@@ -109,6 +115,13 @@ class AppSettings extends SafeNotifier {
   Future<void> setThemeMode(String mode) async {
     if (mode != 'system' && mode != 'light' && mode != 'dark') return;
     themeMode = mode;
+    notifyListeners();
+    await _flush();
+  }
+
+  Future<void> setCoverShape(String shape) async {
+    if (shape != 'round' && shape != 'square') return;
+    coverShape = shape;
     notifyListeners();
     await _flush();
   }

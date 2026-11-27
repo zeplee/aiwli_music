@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+
+import 'cover_source.dart';
 
 /// 从封面图提取主色，用作播放页动态主题。
 ///
@@ -11,10 +14,25 @@ class CoverPalette {
   const CoverPalette._();
 
   static Future<Color?> extract(String? url) async {
-    if (url == null || url.isEmpty) return null;
+    final normalized = CoverSource.normalize(url);
+    if (normalized == null || normalized.isEmpty) return null;
     ui.Image? image;
     try {
-      image = await _loadImage(url).timeout(const Duration(seconds: 6));
+      image = await _loadImage(normalized).timeout(const Duration(seconds: 6));
+      return await _dominantColor(image);
+    } catch (_) {
+      return null;
+    } finally {
+      image?.dispose();
+    }
+  }
+
+  /// 本地封面字节取色：本地曲没有网络 URL，但 artBytes 里有真实封面。
+  static Future<Color?> extractBytes(Uint8List? bytes) async {
+    if (bytes == null || bytes.isEmpty) return null;
+    ui.Image? image;
+    try {
+      image = await _loadMemoryImage(bytes).timeout(const Duration(seconds: 3));
       return await _dominantColor(image);
     } catch (_) {
       return null;
@@ -26,7 +44,11 @@ class CoverPalette {
   static Future<ui.Image> _loadImage(String url) {
     final completer = Completer<ui.Image>();
     // 限尺寸解码：取色只需要小图，别为了一张 3000px 封面解码几十 MB。
-    final provider = ResizeImage(NetworkImage(url), width: 64, height: 64);
+    final provider = ResizeImage(
+      NetworkImage(url, headers: CoverSource.headers(url)),
+      width: 64,
+      height: 64,
+    );
     final stream = provider.resolve(const ImageConfiguration());
     late final ImageStreamListener listener;
     listener = ImageStreamListener(
@@ -40,6 +62,14 @@ class CoverPalette {
       },
     );
     stream.addListener(listener);
+    return completer.future;
+  }
+
+  static Future<ui.Image> _loadMemoryImage(Uint8List bytes) {
+    final completer = Completer<ui.Image>();
+    ui.decodeImageFromList(bytes, (image) {
+      if (!completer.isCompleted) completer.complete(image);
+    });
     return completer.future;
   }
 

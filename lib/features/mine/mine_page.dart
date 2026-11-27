@@ -100,6 +100,18 @@ class MinePage extends ConsumerWidget {
           onTap: () => _pickThemeMode(context, ref),
         ),
         ListTile(
+          leading: Icon(ref.watch(appSettingsProvider).coverShape == 'round'
+              ? Icons.album
+              : Icons.crop_square_outlined),
+          title: const Text('封面形状'),
+          subtitle: Text(
+              ref.watch(appSettingsProvider).coverShape == 'round'
+                  ? '黑胶唱片（播放时旋转）'
+                  : '方形封面（静止）'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _pickCoverShape(context, ref),
+        ),
+        ListTile(
           leading: const Icon(Icons.tune_outlined),
           title: const Text('搜索与下载偏好'),
           subtitle: const Text('默认平台 / 搜索源 / 下载音质与命名'),
@@ -179,6 +191,47 @@ class MinePage extends ConsumerWidget {
     );
     if (picked == null) return;
     await ref.read(appSettingsProvider).setThemeMode(picked);
+  }
+
+  /// 封面形状：黑胶旋转 / 方形静止，点一下即生效。
+  static Future<void> _pickCoverShape(
+      BuildContext context, WidgetRef ref) async {
+    final current = ref.read(appSettingsProvider).coverShape;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('封面形状',
+                    style: TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+              ),
+            ),
+            for (final (shape, label, icon) in const [
+              ('round', '黑胶唱片（播放时旋转）', Icons.album),
+              ('square', '方形封面（静止）', Icons.crop_square_outlined),
+            ])
+              ListTile(
+                leading: Icon(icon),
+                title: Text(label),
+                trailing: current == shape
+                    ? Icon(Icons.check,
+                        color: Theme.of(ctx).colorScheme.primary)
+                    : null,
+                onTap: () => Navigator.of(ctx).pop(shape),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null) return;
+    await ref.read(appSettingsProvider).setCoverShape(picked);
   }
 
   static String tasksSubtitle(WidgetRef ref) {

@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import 'cover_source.dart';
+
 /// 通用封面图：网络图优先，加载失败/无 URL 时用主色渐变兜底。
 /// 不引入第三方缓存库（保持 pubspec 精简），Image.network 自带内存缓存。
 class CoverImage extends StatelessWidget {
@@ -56,13 +58,17 @@ class CoverImage extends StatelessWidget {
     }
     final u = url;
     if (u == null || u.isEmpty) return placeholder;
+    final normalized = CoverSource.normalize(u, size: size.round());
+    if (normalized == null || normalized.isEmpty) return placeholder;
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: Image.network(
-        u,
+        normalized,
+        headers: CoverSource.headers(normalized),
         width: size,
         height: size,
         fit: BoxFit.cover,
+        gaplessPlayback: true,
         errorBuilder: (_, _, _) => placeholder,
         loadingBuilder: (ctx, child, progress) =>
             progress == null ? child : placeholder,
