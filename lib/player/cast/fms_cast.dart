@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io' show File;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_media_session/flutter_media_session.dart';
 
+import '../../core/services/app_paths.dart';
 import '../media_session_cast.dart';
 import '../models.dart';
 
@@ -18,6 +20,7 @@ class FmsCast implements MediaSessionCast {
   final _session = FlutterMediaSession();
   final _commands = StreamController<CastCommand>.broadcast();
   bool _activated = false;
+  int _artGeneration = 0;
 
   @override
   bool get isReady => _activated;
@@ -69,11 +72,52 @@ class FmsCast implements MediaSessionCast {
   @override
   void updateNowPlaying(TrackMetadata meta) {
     if (!_activated) return;
+    // 本地封面只有字节，插件 MediaMetadata 只收 artworkUri。
+    // 异步落文件后用 generation 防止慢写入覆盖新切到的歌。
+    final bytes = meta.artBytes;
+    if (bytes != null && bytes.isNotEmpty) {
+      final gen = ++_artGeneration;
+      unawaited(_pushWithLocalArt(meta, bytes, gen));
+      return;
+    }
+    _artGeneration++;
+    final url = meta.artUri;
+    // 只有 http(s) 网络图或已存在的本地文件才交给 Media3 解码；
+    // 非法/不支持的 scheme（如 data:、svg 源）传过去只会得到黑色占位。
+    final artwork = (url != null &&
+            (url.scheme == 'http' ||
+                url.scheme == 'https' ||
+                url.scheme == 'file'))
+        ? url.toString()
+        : null;
+    _push(meta, artwork);
+  }
+
+  Future<void> _pushWithLocalArt(
+      TrackMetadata meta, Uint8List bytes, int gen) async {
+    String? path;
+    try {
+      final dir = await AppPaths.supportDir();
+      // 固定文件名：同一时刻只有一首歌在用，且切歌时会整体覆盖，
+      // 避免每首歌都留一个缓存文件。
+      final f = File('$dir/notification_art.bin');
+      await f.writeAsBytes(bytes, flush: false);
+      path = f.uri.toString();
+    } catch (e) {
+      debugPrint('[FmsCast] 本地封面落盘失败: $e');
+      // 落盘失败也要把标题/歌手推给系统，不能整条 metadata 丢掉。
+      path = meta.artUri?.toString();
+    }
+    if (gen != _artGeneration || !_activated) return;
+    _push(meta, path);
+  }
+
+  void _push(TrackMetadata meta, String? artworkUri) {
     FlutterMediaSessionPlatform.instance.updateMetadata(MediaMetadata(
       title: meta.title,
       artist: meta.artist,
       album: meta.album,
-      artworkUri: meta.artUri?.toString(),
+      artworkUri: artworkUri,
       duration: meta.duration,
     ));
   }

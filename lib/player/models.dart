@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 enum EngineProcessing { idle, loading, buffering, ready, completed, error }
 
 class EngineSnapshot {
@@ -67,12 +69,17 @@ class TrackMetadata {
     this.album,
     this.duration,
     this.artUri,
+    this.artBytes,
   });
   final String title;
   final String artist;
   final String? album;
   final Duration? duration;
   final Uri? artUri;
+
+  /// 本地封面字节（on_audio_query 的内存图）。插件只收 artworkUri，
+  /// 由 FmsCast 落成缓存文件后转成 file:// URI；优先级高于 [artUri]。
+  final Uint8List? artBytes;
 }
 
 class PlayerUiState {

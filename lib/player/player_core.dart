@@ -57,8 +57,10 @@ class PlayerItem {
   TrackMetadata get metadata => TrackMetadata(
         title: title,
         artist: artist,
+        album: album,
         duration: duration,
         artUri: artUri,
+        artBytes: artBytes,
       );
 }
 
@@ -278,7 +280,8 @@ class PlayerCore {
     // 通知栏元数据永远停在上一首/空白（真机取证：android.title=null）。
     final meta = item?.metadata;
     final key = '${meta?.title}|${meta?.artist}|${meta?.album}|'
-        '${meta?.artUri}|${s.playing}|${s.duration}';
+        '${meta?.artUri}|${meta?.artBytes?.length}|'
+        '${s.playing}|${s.duration}';
     if (key == _lastCastKey) return;
     // 只有 cast 真正就绪才记录 key；未就绪的推送会被 cast 静默丢弃，
     // 若此时记账，init 完成前同一首歌的状态变化都会被去重挡掉。
