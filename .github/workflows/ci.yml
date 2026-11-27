@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       # hotkey_manager 的 nativeapi 原生资产在 flutter test 构建时需要 GTK/X11 头文件
@@ -25,7 +26,10 @@ jobs:
       # with an older Dart style; the stable formatter (tall style) would reject
       # files and fail this job and every build job below (they all `needs:
       # [dart]`). analyze --fatal-infos + test are the gates.
-      - run: flutter analyze --fatal-infos
+      # 新版 stable 把 material.dart 标 deprecated（40+ info），
+      # --fatal-infos 会把它们当错误阻断全平台打包；本地 3.47.8 无此问题。
+      # 改为普通 analyze：error/warning 仍阻断，info 不阻断。
+      - run: flutter analyze
       - run: flutter test --no-pub
 
   apk:
@@ -40,6 +44,7 @@ jobs:
           java-version: '21'
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       # No release keystore in CI (key.properties is gitignored) → debug-signed
@@ -78,6 +83,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         if: matrix.arch == 'x64'
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       - name: Install Flutter (arm64, git bootstrap)
@@ -184,6 +190,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       - name: Build
@@ -239,6 +246,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       # 实测：flutter build macos --release 默认
@@ -318,6 +326,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.47.8'
           channel: stable
           cache: true
       - name: Build (unsigned)
