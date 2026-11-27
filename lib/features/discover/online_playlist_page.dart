@@ -1,12 +1,17 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../app_providers.dart';
 import '../../core/models/music.dart';
+import '../../core/services/playlists.dart';
 import '../../sources/builtin/catalog_sdk.dart';
 import '../../../player/player_core.dart';
 import '../player/player_page.dart';
+import 'playlist_selection.dart';
 
 /// 在线歌单详情。
 ///
@@ -37,6 +42,8 @@ class OnlinePlaylistPage extends ConsumerStatefulWidget {
 class _OnlinePlaylistPageState extends ConsumerState<OnlinePlaylistPage> {
   List<MusicInfo>? _songs;
   bool _loading = true;
+  String _query = '';
+  final PlaylistSelection _selection = PlaylistSelection();
 
   @override
   void initState() {
@@ -94,7 +101,8 @@ class _OnlinePlaylistPageState extends ConsumerState<OnlinePlaylistPage> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final songs = _songs ?? const <MusicInfo>[];
+    final all = _songs ?? const <MusicInfo>[];
+    final songs = filterPlaylistSongs(all, _query);
 
     return GlassScaffold(
       edgeToEdge: true,
@@ -123,44 +131,195 @@ class _OnlinePlaylistPageState extends ConsumerState<OnlinePlaylistPage> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : songs.isEmpty
+          : all.isEmpty
               ? _EmptyHint(source: widget.source, onRetry: _load)
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                  itemCount: songs.length + 1,
-                  itemBuilder: (context, i) {
-                    if (i == 0) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: GlassContainer(
-                          shape: const LiquidRoundedSuperellipse(
-                              borderRadius: 16),
-                          padding: const EdgeInsets.all(14),
-                          child: Row(children: [
-                            Expanded(
-                              child: Text('${songs.length} 首',
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600)),
-                            ),
-                            FilledButton.icon(
-                              onPressed: () => _playAll(songs),
-                              icon: const Icon(Icons.play_arrow, size: 20),
-                              label: const Text('播放全部'),
-                            ),
-                          ]),
-                        ),
-                      );
-                    }
-                    final m = songs[i - 1];
-                    return _SongRow(
-                      index: i,
-                      song: m,
-                      onTap: () => _playAll(songs, index: i - 1),
-                    );
-                  },
-                ),
+              : Column(children: [
+                  _headerCard(songs, all),
+                  if (_selection.active) _batchBar(songs),
+                  Expanded(
+                    child: songs.isEmpty
+                        ? const Center(child: Text('没有匹配的曲目'))
+                        : ListView.builder(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                            itemCount: songs.length,
+                            itemBuilder: (context, i) {
+                              final m = songs[i];
+                              final selected =
+                                  _selection.selected.contains(i);
+                              return Row(children: [
+                                if (_selection.active)
+                                  Checkbox(
+                                    value: selected,
+                                    onChanged: (_) =>
+                                        setState(() => _selection.toggle(i)),
+                                  ),
+                                Expanded(
+                                  child: _SongRow(
+                                    index: i + 1,
+                                    song: m,
+                                    onTap: _selection.active
+                                        ? () =>
+                                            setState(() => _selection.toggle(i))
+                                        : () => _playAll(songs, index: i),
+                                    onLongPress: () => setState(() {
+                                      _selection.enter();
+                                      _selection.toggle(i);
+                                    }),
+                                  ),
+                                ),
+                              ]);
+                            },
+                          ),
+                  ),
+                ]),
     );
+  }
+
+  Widget _headerCard(List<MusicInfo> songs, List<MusicInfo> all) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: GlassContainer(
+        shape: const LiquidRoundedSuperellipse(borderRadius: 16),
+        padding: const EdgeInsets.all(12),
+        // GlassContainer 不是 Material 祖先，里面的 IconButton/FilledButton
+        // 内部用 InkWell，不包一层会抛 No Material widget found。
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Expanded(
+              child: Text('${songs.length} 首',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600)),
+            ),
+            IconButton(
+              tooltip: '随机播放',
+              icon: const Icon(Icons.shuffle, size: 18),
+              onPressed: songs.isEmpty
+                  ? null
+                  : () {
+                      final shuffled = [...songs]..shuffle(math.Random());
+                      _playAll(shuffled);
+                    },
+            ),
+            IconButton(
+              tooltip: '收藏整张歌单到本地',
+              icon: const Icon(Icons.favorite_border, size: 18),
+              onPressed: all.isEmpty ? null : () => _collectAll(all),
+            ),
+            FilledButton.icon(
+              onPressed: songs.isEmpty ? null : () => _playAll(songs),
+              icon: const Icon(Icons.play_arrow, size: 20),
+              label: const Text('播放全部'),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          TextField(
+            onChanged: (v) => setState(() {
+              _query = v;
+              _selection.exit();
+            }),
+            decoration: const InputDecoration(
+              hintText: '在歌单内搜索歌名 / 歌手',
+              prefixIcon: Icon(Icons.search, size: 18),
+              border: OutlineInputBorder(),
+            ),
+          ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _batchBar(List<MusicInfo> songs) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.primaryContainer,
+      child: Row(children: [
+        IconButton(
+          tooltip: '退出多选',
+          icon: const Icon(Icons.close),
+          onPressed: () => setState(() => _selection.exit()),
+        ),
+        Text('已选 ${_selection.count} 首',
+            style: const TextStyle(fontSize: 12)),
+        const Spacer(),
+        TextButton(
+          onPressed: () =>
+              setState(() => _selection.selectAll(songs.length)),
+          child: const Text('全选'),
+        ),
+        IconButton(
+          tooltip: '播放选中',
+          icon: const Icon(Icons.play_arrow),
+          onPressed: _selection.isEmpty
+              ? null
+              : () {
+                  final picked = [
+                    for (final i in _selection.selected)
+                      if (i < songs.length) songs[i],
+                  ];
+                  _playAll(picked);
+                  setState(() => _selection.exit());
+                },
+        ),
+        IconButton(
+          tooltip: '批量下载',
+          icon: const Icon(Icons.download_for_offline_outlined),
+          onPressed: _selection.isEmpty
+              ? null
+              : () {
+                  final manager = ref.read(downloadManagerProvider);
+                  for (final i in _selection.selected) {
+                    if (i < songs.length) {
+                      unawaited(manager.start(_toItem(songs[i])));
+                    }
+                  }
+                  setState(() => _selection.exit());
+                },
+        ),
+        IconButton(
+          tooltip: '加入歌单',
+          icon: const Icon(Icons.playlist_add),
+          onPressed: _selection.isEmpty
+              ? null
+              : () {
+                  final entries = [
+                    for (final i in _selection.selected)
+                      if (i < songs.length) _toItem(songs[i]).toEntry(),
+                  ];
+                  _addToNewPlaylist(entries);
+                },
+        ),
+      ]),
+    );
+  }
+
+  PlayerItem _toItem(MusicInfo m) => PlayerItem(
+        title: m.title,
+        artist: m.artist,
+        sourceId: m.sourceId,
+        musicId: m.musicId,
+        album: m.album?.name,
+        artUri: (m.album?.picUrl == null || m.album!.picUrl!.isEmpty)
+            ? null
+            : Uri.tryParse(m.album!.picUrl!),
+        duration: m.duration,
+        raw: m.raw,
+      );
+
+  void _addToNewPlaylist(List<PlaylistEntry> entries) {
+    if (entries.isEmpty) return;
+    final svc = ref.read(playlistsProvider);
+    final p = svc.create(widget.title);
+    svc.addEntries(p.id, entries);
+    setState(() => _selection.exit());
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已把 ${entries.length} 首加入新歌单')));
+  }
+
+  void _collectAll(List<MusicInfo> all) {
+    _addToNewPlaylist([for (final m in all) _toItem(m).toEntry()]);
   }
 }
 
@@ -210,10 +369,16 @@ class _EmptyHint extends StatelessWidget {
 }
 
 class _SongRow extends StatelessWidget {
-  const _SongRow({required this.index, required this.song, required this.onTap});
+  const _SongRow({
+    required this.index,
+    required this.song,
+    required this.onTap,
+    this.onLongPress,
+  });
   final int index;
   final MusicInfo song;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -223,6 +388,7 @@ class _SongRow extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
+        onLongPress: onLongPress,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
           child: Row(children: [

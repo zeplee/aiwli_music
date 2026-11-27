@@ -7,12 +7,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app_providers.dart';
 import '../../../core/models/music.dart';
 import '../../../core/models/quality.dart';
+import '../../../core/services/playlists.dart';
 import '../../../player/player_core.dart';
 import '../../../sources/builtin/builtin_search.dart';
 import '../../../sources/builtin/catalog_sdk.dart';
 import '../../../sources/lx/lx_source.dart';
 import '../../../sources/registry.dart';
 import '../player/player_page.dart';
+import 'widgets/search_suggestions.dart';
 
 /// 搜索页：五平台并发聚合（酷我/QQ/网易/酷狗/咪咕）+ 脚本源补充。
 ///
@@ -38,6 +40,13 @@ class _SearchPageState extends ConsumerState<SearchPage>
   bool _loading = false;
   String? _error;
   int _generation = 0;
+
+  /// 输入联想（本地匹配，250ms 防抖，不发网络请求）。
+  Timer? _suggestTimer;
+  List<String> _suggestions = const [];
+
+  /// 「全部」Tab 的批量选择。
+  final SearchSelection _selection = SearchSelection();
 
   /// 当前选中的 Tab（默认「全部」）。
   int _tabIndex = 0;
@@ -130,6 +139,35 @@ class _SearchPageState extends ConsumerState<SearchPage>
   /// 正在补屏的源，防止重复触发。
   final Set<String> _filling = {};
 
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onQueryChanged);
+  }
+
+  void _onQueryChanged() {
+    _suggestTimer?.cancel();
+    _suggestTimer = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      final titles = <String>[];
+      final artists = <String>[];
+      for (final g in _groups) {
+        for (final m in g.songs) {
+          titles.add(m.title);
+          if (m.artist.isNotEmpty) artists.add(m.artist);
+        }
+      }
+      setState(() {
+        _suggestions = searchSuggestions(
+          input: _controller.text,
+          history: ref.read(searchHistoryProvider).items,
+          resultTitles: titles,
+          resultArtists: artists,
+        );
+      });
+    });
+  }
+
   Future<void> _loadMore(int idx) async {
     if (idx < 0 || idx >= _groups.length) return;
     final g = _groups[idx];
@@ -148,6 +186,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
   @override
   void dispose() {
+    _suggestTimer?.cancel();
     _tabs?.removeListener(_onTabChanged);
     for (final c in _scrollCtrls.values) {
       c.dispose();
@@ -157,6 +196,11 @@ class _SearchPageState extends ConsumerState<SearchPage>
     _tabs?.dispose();
     super.dispose();
   }
+
+  List<String> get _failedSourceNames => [
+    for (final g in _groups)
+      if (g.state == SourceSearchState.failed) g.label,
+  ];
 
   /// 拉分类结果（专辑 / 歌单 / 艺人）。
   ///
@@ -458,6 +502,28 @@ class _SearchPageState extends ConsumerState<SearchPage>
             ),
           ),
         ),
+        if (_suggestions.isNotEmpty && _controller.text.trim().isNotEmpty)
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                for (final s in _suggestions)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ActionChip(
+                      label: Text(s, style: const TextStyle(fontSize: 12)),
+                      onPressed: () {
+                        _controller.text = s;
+                        unawaited(_search());
+                        setState(() => _suggestions = const []);
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
         if (!registry.hasActiveSource)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
@@ -467,6 +533,24 @@ class _SearchPageState extends ConsumerState<SearchPage>
               Expanded(
                 child: Text('可搜索；点播取链需在「我的 → 音源管理」导入脚本',
                     style: TextStyle(fontSize: 11, color: scheme.outline)),
+              ),
+            ]),
+          ),
+        if (_failedSourceNames.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+            child: Row(children: [
+              Icon(Icons.warning_amber_outlined,
+                  size: 15, color: scheme.error),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text('${_failedSourceNames.join('、')} 搜索失败',
+                    style: TextStyle(fontSize: 11, color: scheme.error)),
+              ),
+              TextButton(
+                onPressed: () => unawaited(
+                    _search()), // 重跑整次搜索，沿用现有交互
+                child: const Text('重试', style: TextStyle(fontSize: 11)),
               ),
             ]),
           ),
@@ -482,6 +566,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
                       style: TextStyle(fontSize: 12, color: scheme.error))),
             ]),
           ),
+        if (_selection.active)
+          _batchBar(scheme),
         Expanded(child: _body(scheme)),
       ]),
     );
@@ -627,6 +713,91 @@ class _SearchPageState extends ConsumerState<SearchPage>
     );
   }
 
+  Widget _batchBar(ColorScheme scheme) {
+    final merged = _mergedAll;
+    return Material(
+      color: scheme.primaryContainer,
+      child: Row(children: [
+        IconButton(
+          tooltip: '退出多选',
+          icon: const Icon(Icons.close),
+          onPressed: () => setState(() => _selection.exit()),
+        ),
+        Text('已选 ${_selection.count} 首',
+            style: const TextStyle(fontSize: 13)),
+        const Spacer(),
+        TextButton(
+          onPressed: () => setState(
+              () => _selection.selectAll(merged.length)),
+          child: const Text('全选'),
+        ),
+        TextButton(
+          onPressed: () => setState(() => _selection.invert(merged.length)),
+          child: const Text('反选'),
+        ),
+        TextButton(
+          onPressed: _selection.isEmpty
+              ? null
+              : () => _addSelectedToPlaylist(merged),
+          child: const Text('加入歌单'),
+        ),
+        IconButton(
+          tooltip: '批量下载',
+          icon: const Icon(Icons.download_for_offline_outlined),
+          onPressed: _selection.isEmpty
+              ? null
+              : () {
+                  final manager = ref.read(downloadManagerProvider);
+                  for (final i in _selection.selected) {
+                    if (i >= 0 && i < merged.length) {
+                      final m = merged[i].$2;
+                      unawaited(manager.start(PlayerItem(
+                        title: m.title,
+                        artist: m.artist,
+                        sourceId: m.sourceId,
+                        musicId: m.musicId,
+                        album: m.album?.name,
+                        artUri: (m.album?.picUrl == null ||
+                                m.album!.picUrl!.isEmpty)
+                            ? null
+                            : Uri.tryParse(m.album!.picUrl!),
+                        duration: m.duration,
+                        raw: m.raw,
+                      )));
+                    }
+                  }
+                  setState(() => _selection.exit());
+                },
+        ),
+      ]),
+    );
+  }
+
+  Future<void> _addSelectedToPlaylist(
+      List<(SourceGroup, MusicInfo)> merged) async {
+    final svc = ref.read(playlistsProvider);
+    final entries = <PlaylistEntry>[
+      for (final i in _selection.selected)
+        if (i >= 0 && i < merged.length)
+          PlayerItem(
+            title: merged[i].$2.title,
+            artist: merged[i].$2.artist,
+            sourceId: merged[i].$2.sourceId,
+            musicId: merged[i].$2.musicId,
+            album: merged[i].$2.album?.name,
+            duration: merged[i].$2.duration,
+            raw: merged[i].$2.raw,
+          ).toEntry(),
+    ];
+    if (entries.isEmpty) return;
+    final p = svc.create('搜索选中 ${DateTime.now().month}.${DateTime.now().day}');
+    svc.addEntries(p.id, entries);
+    if (!mounted) return;
+    setState(() => _selection.exit());
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已把 ${entries.length} 首加入新歌单')));
+  }
+
   /// 「全部」：合并列表，每行带来源小标签。
   Widget _buildAllTab(ColorScheme scheme) {
     final merged = _mergedAll;
@@ -641,13 +812,29 @@ class _SearchPageState extends ConsumerState<SearchPage>
         if (i == merged.length) return _allTabFooter(scheme);
         final (g, m) = merged[i];
         final songs = g.songs;
-        return _songTile(
-          m,
-          scheme,
-          tileKey: i == 0 ? const ValueKey('song_all_0') : null,
-          sourceLabel: g.label,
-          onTap: () => _playAll(songs, songs.indexOf(m)),
-        );
+        final selected = _selection.selected.contains(i);
+        return Row(children: [
+          if (_selection.active)
+            Checkbox(
+              value: selected,
+              onChanged: (_) => setState(() => _selection.toggle(i)),
+            ),
+          Expanded(
+            child: _songTile(
+              m,
+              scheme,
+              tileKey: i == 0 ? const ValueKey('song_all_0') : null,
+              sourceLabel: g.label,
+              onTap: _selection.active
+                  ? () => setState(() => _selection.toggle(i))
+                  : () => _playAll(songs, songs.indexOf(m)),
+              onLongPress: () => setState(() {
+                _selection.enter();
+                _selection.toggle(i);
+              }),
+            ),
+          ),
+        ]);
       },
     );
   }
@@ -799,11 +986,13 @@ class _SearchPageState extends ConsumerState<SearchPage>
     String? sourceLabel,
     Key? tileKey,
     required VoidCallback onTap,
+    VoidCallback? onLongPress,
   }) {
     final q = m.qualities.map((e) => e.label).join(' / ').trim();
     return ListTile(
       key: tileKey,
       dense: true,
+      onLongPress: onLongPress,
       leading: const Icon(Icons.music_note, size: 20),
       title: Row(children: [
         Flexible(
