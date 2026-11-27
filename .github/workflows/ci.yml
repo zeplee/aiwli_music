@@ -100,7 +100,11 @@ jobs:
         run: |
           flutter pub get
           V="${GITHUB_REF_NAME#v}"; case "$GITHUB_REF_NAME" in v*) ;; *) V="0.0.0" ;; esac
-          flutter build linux --release --build-name="$V"
+          # tray_manager 上游插件用了 app_indicator_new，新版 Ubuntu 头文件
+          # 标记为 deprecated；插件自身 CMake 带 -Werror，导致弃用警告被当错误。
+          # 这里只降低 CI 编译严格度，不改应用代码。
+          CXXFLAGS="-Wno-error=deprecated-declarations" \
+            flutter build linux --release --build-name="$V"
       - name: Package
         run: tar -czf aiwli-music-linux-${{ matrix.arch }}.tar.gz -C build/linux/${{ matrix.arch }}/release/bundle .
       - name: Package deb
