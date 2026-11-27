@@ -9,6 +9,7 @@ import 'core/models/lyric.dart';
 import 'core/models/music.dart';
 import 'core/services/app_settings.dart';
 import 'core/services/backup_service.dart';
+import 'core/services/comment_paging.dart';
 import 'core/services/logger.dart';
 import 'core/services/play_history_service.dart';
 import 'core/services/source_health_service.dart';
@@ -297,43 +298,70 @@ final lyricServiceProvider =
 // ============ 评论 ============
 
 class CommentState {
-  const CommentState({this.items = const [], this.loading = false, this.error});
+  const CommentState({
+    this.items = const [],
+    this.loading = false,
+    this.loadingMore = false,
+    this.hasMore = false,
+    this.error,
+    this.errorKind,
+    this.loadMoreError,
+  });
   final List<CommentItem> items;
   final bool loading;
+  final bool loadingMore;
+  final bool hasMore;
   final String? error;
+  final CommentErrorKind? errorKind;
+  final String? loadMoreError;
 }
 
 class CommentService extends SafeNotifier {
-  CommentService(Ref ref);
-  final Map<String, List<CommentItem>> _cache = {};
-  CommentState current = const CommentState();
-  String? _key;
+  CommentService(Ref ref) {
+    _paging = CommentPaging<CommentQuery, CommentItem>(
+      fetchPage: (q, offset, limit) => CommentSdk.fetchPage(
+        sourceId: q.sourceId,
+        musicId: q.musicId,
+        title: q.title,
+        artist: q.artist,
+        limit: limit,
+        offset: offset,
+      ),
+      keyOf: (q) => q.key,
+      onChanged: _sync,
+      dedupeKey: (c) => '${c.user}|${c.content}|${c.time}',
+    );
+  }
 
-  Future<void> fetchFor(String sourceId, String musicId,
-      {String title = '', String artist = ''}) async {
-    final key = '$sourceId/$musicId';
-    if (key == _key && current.items.isNotEmpty) return;
-    _key = key;
-    final cached = _cache[key];
-    if (cached != null) {
-      current = CommentState(items: cached);
-      notifyListeners();
-      return;
-    }
-    current = const CommentState(loading: true);
-    notifyListeners();
-    try {
-      final list = await CommentSdk.fetch(
-          sourceId: sourceId, musicId: musicId, title: title, artist: artist);
-      if (_key != key) return;
-      _cache[key] = list;
-      current = CommentState(
-          items: list, error: list.isEmpty ? '当前音源暂无可获取的评论' : null);
-    } catch (e) {
-      if (_key == key) current = CommentState(error: '评论获取失败: $e');
-    }
+  late final CommentPaging<CommentQuery, CommentItem> _paging;
+  CommentState current = const CommentState();
+
+  void _sync() {
+    final p = _paging;
+    current = CommentState(
+      items: p.items,
+      loading: p.loading,
+      loadingMore: p.loadingMore,
+      hasMore: p.hasMore,
+      error: p.error,
+      errorKind: p.errorKind,
+      loadMoreError: p.loadMoreError,
+    );
     notifyListeners();
   }
+
+  /// 切歌时调用：状态机会先同步清空旧列表，再用 requestId 作废在飞请求。
+  Future<void> fetchFor(String sourceId, String musicId,
+      {String title = '', String artist = ''}) =>
+      _paging.load(CommentQuery(
+        sourceId: sourceId,
+        musicId: musicId,
+        title: title,
+        artist: artist,
+      ));
+
+  Future<void> loadMore() => _paging.loadMore();
+  Future<void> refresh() => _paging.refresh();
 }
 
 final commentServiceProvider =

@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app_providers.dart';
 import '../../core/models/quality.dart';
+import '../../core/services/comment_paging.dart' show CommentErrorKind;
 import '../../core/ui/cover_palette.dart';
 import '../../sources/builtin/instrumental_finder.dart';
 import '../../player/models.dart';
@@ -1042,6 +1043,76 @@ class _CommentsPage extends ConsumerStatefulWidget {
 
 class _CommentsPageState extends ConsumerState<_CommentsPage> {
   String? _key;
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(() {
+      if (!_scroll.hasClients) return;
+      // 距底部 200px 内就预取，避免滚到底才发起请求。
+      if (_scroll.position.extentAfter > 200) return;
+      final svc = ref.read(commentServiceProvider);
+      final s = svc.current;
+      if (s.hasMore && !s.loading && !s.loadingMore && s.loadMoreError == null) {
+        svc.loadMore();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  /// 空态文案按错误类型区分，不再一律「换个音源试试」
+  /// （换音源实际上还是走同一个网易接口）。
+  String _emptyText(CommentState state) {
+    final err = state.error;
+    if (err == null || err.isEmpty) return '暂无评论';
+    return switch (state.errorKind) {
+      CommentErrorKind.parse => '评论数据解析失败，稍后重试',
+      CommentErrorKind.unsupported => '这个音源暂时没有可获取的评论',
+      _ => '评论加载失败，检查网络后重试',
+    };
+  }
+
+  Widget _footer(BuildContext context, CommentState state) {
+    final scheme = Theme.of(context).colorScheme;
+    if (state.loadingMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+            child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+    if (state.loadMoreError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Center(
+          child: TextButton.icon(
+            onPressed: () => ref.read(commentServiceProvider).loadMore(),
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('加载失败，点此重试'),
+          ),
+        ),
+      );
+    }
+    if (!state.hasMore) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Center(
+          child: Text('已到底',
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+        ),
+      );
+    }
+    return const SizedBox(height: 24);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1100,20 +1171,32 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              state.error == null || state.error!.isEmpty
-                  ? '暂无评论'
-                  : '评论加载失败 · 换个音源试试',
+              _emptyText(state),
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
             ),
+            if (state.error != null) ...[
+              const SizedBox(height: 10),
+              TextButton.icon(
+                onPressed: () => ref.read(commentServiceProvider).refresh(),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('重试'),
+              ),
+            ],
           ],
         ),
       );
     } else {
-      body = ListView.separated(
+      body = RefreshIndicator(
+        onRefresh: () => ref.read(commentServiceProvider).refresh(),
+        child: ListView.separated(
+        controller: _scroll,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: state.items.length,
+        // 多一个底部状态行：加载中 / 已到底 / 加载失败可重试。
+        itemCount: state.items.length + 1,
         separatorBuilder: (_, _) => const Divider(height: 16),
         itemBuilder: (context, i) {
+          if (i == state.items.length) return _footer(context, state);
           final c = state.items[i];
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1159,6 +1242,7 @@ class _CommentsPageState extends ConsumerState<_CommentsPage> {
             ],
           );
         },
+      ),
       );
     }
     return ClipRRect(
