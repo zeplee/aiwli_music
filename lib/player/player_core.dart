@@ -196,6 +196,27 @@ class PlayerCore {
     if (current != null) _pushToCast();
   }
 
+  /// 首次真正加载曲目时才激活媒体会话；清空队列时停用。
+  /// 这样没有正在播放的音乐时通知栏不会出现一张无信息的黑卡片。
+  Future<void> _ensureCastActive() async {
+    final cast = _cast;
+    if (cast == null) return;
+    if (cast.isReady) return;
+    if (_castInit != null) return; // 已有一次激活在飞，等它完成
+    _castInit = cast
+        .init()
+        .whenComplete(() {
+          if (!_disposed) {
+            _lastCastKey = null;
+            _pushToCast();
+          }
+        })
+        .catchError((Object _) {});
+    await _castInit;
+    // 停用后再次播放要允许重新 init
+    _castInit = null;
+  }
+
   /// 队列已空：彻底停播并重置状态，避免「mini player 消失但还在响」。
   Future<void> _clearPlayback() async {
     _index = -1;
@@ -203,6 +224,13 @@ class PlayerCore {
     _endOfTrackPause = false;
     _loadGeneration++; // 作废在途的 _loadAt，避免清空后又把歌载回来
     await _engine.pause();
+    // 没曲目了就停用系统媒体会话，否则通知栏留一张无信息的黑卡片。
+    final cast = _cast;
+    if (cast != null) {
+      await cast.deactivate();
+      _lastCastKey = null;
+      _castInit = null; // 允许下次播放时重新 init
+    }
     state.value = state.value.copyWith(
         playing: false,
         processing: EngineProcessing.idle,
@@ -239,20 +267,8 @@ class PlayerCore {
   void _bindCast() {
     final cast = _cast;
     if (cast == null) return;
-    // init() 是异步的：activate() + 两个配置调用都要走 platform channel。
-    // 构造函数不能 await，所以把 Future 存下来，完成后强制重推一次，
-    // 避免「首推在 _activated=false 时被丢弃、去重 key 却已写好」——
-    // 那会让这首歌整段生命周期通知栏都是空的（真机表现为有时候全黑）。
-    _castInit = cast
-        .init()
-        .whenComplete(() {
-          if (!_disposed) {
-            _lastCastKey = null;
-            _pushToCast();
-          }
-        })
-        // init 失败时媒体广播降级即可，不能让 dispose 里的 await 抛异常。
-        .catchError((Object _) {});
+    // 媒体会话延迟到真正有曲目要播时才初始化。
+    // 之前构造时立刻 activate()，导致没播歌时通知栏也有一张黑卡片。
     _castSub = cast.commands.listen((cmd) {
       switch (cmd.type) {
         case CastCommandType.play:
@@ -469,6 +485,7 @@ class PlayerCore {
 
   Future<void> _loadAt(int index) async {
     if (index < 0 || index >= _queue.length) return;
+    unawaited(_ensureCastActive());
     AppLog.d('Load', '_loadAt($index) gen=${_loadGeneration + 1} title=${_queue[index].title}');
     _index = index;
     final item = _queue[index];

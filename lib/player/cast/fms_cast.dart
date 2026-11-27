@@ -26,6 +26,18 @@ class FmsCast implements MediaSessionCast {
   bool get isReady => _activated;
 
   @override
+  Future<void> deactivate() async {
+    if (!_activated) return;
+    try {
+      await _session.deactivate();
+    } catch (e) {
+      debugPrint('[FmsCast] deactivate 失败: $e');
+    }
+    _activated = false;
+    _artGeneration++;
+  }
+
+  @override
   Stream<CastCommand> get commands => _commands.stream;
 
   @override

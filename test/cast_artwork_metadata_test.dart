@@ -13,6 +13,8 @@ class _Cast implements MediaSessionCast {
   @override
   bool get isReady => true;
   @override
+  Future<void> deactivate() async {}
+  @override
   void updateNowPlaying(TrackMetadata meta) => metas.add(meta);
   @override
   void updatePlayback({

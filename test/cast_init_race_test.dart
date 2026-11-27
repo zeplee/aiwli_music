@@ -21,18 +21,26 @@ class _Engine extends StubEngine {
 class _DelayedCast implements MediaSessionCast {
   final Completer<void> gate = Completer<void>();
   bool ready = false;
+  int initCalls = 0;
+  int deactivateCalls = 0;
   final nowPlaying = <TrackMetadata>[];
   final playback = <String>[];
   final commandsCtrl = StreamController<CastCommand>.broadcast();
 
   @override
   Future<void> init() async {
+    initCalls++;
     await gate.future;
     ready = true;
   }
 
   @override
   bool get isReady => ready;
+  @override
+  Future<void> deactivate() async {
+    deactivateCalls++;
+    ready = false;
+  }
 
   @override
   void updateNowPlaying(TrackMetadata meta) {
@@ -123,6 +131,68 @@ void main() {
     expect(cast.playback.length, first, reason: '同 key 不应重复推');
   });
 
+  test('无曲目时不激活媒体会话（通知栏不该有黑卡片）', () async {
+    final cast = _DelayedCast();
+    final core = PlayerCore(engine: _Engine(), cast: cast);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(cast.initCalls, 0,
+        reason: '构造 PlayerCore 不该激活系统媒体会话');
+    expect(cast.nowPlaying, isEmpty);
+    await core.dispose();
+  });
+
+  test('播放曲目时才激活；清空队列后停用', () async {
+    final cast = _DelayedCast();
+    final core = PlayerCore(engine: _Engine(), cast: cast);
+
+    await core.setQueue([
+      PlayerItem(
+        title: '测试曲',
+        artist: '歌手',
+        sourceId: 'local',
+        musicId: '/a.mp3',
+        resolvedUrl: 'file:///a.mp3',
+      ),
+    ]);
+    cast.gate.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(cast.initCalls, 1, reason: '有曲目时才激活');
+    expect(cast.ready, isTrue);
+
+    await core.setQueue([]);
+    expect(cast.deactivateCalls, 1, reason: '没曲目了必须停用');
+    expect(cast.ready, isFalse);
+    await core.dispose();
+  });
+
+  test('停用后再次播放能重新激活', () async {
+    final cast = _DelayedCast();
+    final core = PlayerCore(engine: _Engine(), cast: cast);
+    final item = PlayerItem(
+      title: '测试曲',
+      artist: '歌手',
+      sourceId: 'local',
+      musicId: '/a.mp3',
+      resolvedUrl: 'file:///a.mp3',
+    );
+
+    await core.setQueue([item]);
+    cast.gate.complete();
+    await Future<void>.delayed(Duration.zero);
+    await core.setQueue([]);
+    expect(cast.ready, isFalse);
+
+    // 第二次播放：_DelayedCast.gate 已完成，init 会立刻返回
+    await core.setQueue([item]);
+    await Future<void>.delayed(Duration.zero);
+    expect(cast.initCalls, 2, reason: '停用后再次播放要重新 init');
+    expect(cast.ready, isTrue);
+    await core.dispose();
+  });
+
   test('init 抛异常时 dispose 不受影响', () async {
     final bad = _ThrowingCast();
     final c = PlayerCore(engine: _Engine(), cast: bad);
@@ -136,6 +206,8 @@ class _ThrowingCast implements MediaSessionCast {
   Future<void> init() async => throw StateError('no media session');
   @override
   bool get isReady => false;
+  @override
+  Future<void> deactivate() async {}
   @override
   void updateNowPlaying(TrackMetadata meta) {}
   @override

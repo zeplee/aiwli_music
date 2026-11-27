@@ -22,6 +22,11 @@ class MprisCast implements MediaSessionCast {
   bool get isReady => _ready;
 
   @override
+  Future<void> deactivate() async {
+    _ready = false;
+  }
+
+  @override
   Stream<CastCommand> get commands => _commands.stream;
 
   @override

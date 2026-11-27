@@ -115,6 +115,8 @@ class _RecordingCast implements MediaSessionCast {
   @override
   bool get isReady => true;
   @override
+  Future<void> deactivate() async {}
+  @override
   void updateNowPlaying(TrackMetadata meta) => nowPlaying.add(meta);
   @override
   void updatePlayback(
