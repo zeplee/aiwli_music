@@ -139,7 +139,7 @@ class MinePage extends ConsumerWidget {
         const ListTile(
             leading: Icon(Icons.info_outline),
             title: Text('Aiwli Music'),
-            subtitle: Text('v1.3.9 · 本地+音源闭环版')),
+            subtitle: Text('v1.4.0 · 本地+音源闭环版')),
         const ListTile(
             leading: Icon(Icons.code),
             title: Text('架构'),
