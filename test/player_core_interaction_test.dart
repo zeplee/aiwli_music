@@ -137,6 +137,19 @@ void main() {
     expect(engine.seeks, [const Duration(seconds: 42)]);
     expect(core.state.value.position, const Duration(seconds: 42));
   });
+
+  test('togglePlayPause 连点按实时状态交替，不会两次都 play', () async {
+    await core.setQueue([_item('a')]);
+    await pump();
+    expect(core.state.value.playing, isTrue);
+
+    await core.togglePlayPause();
+    expect(core.state.value.playing, isFalse);
+    await core.togglePlayPause();
+    expect(core.state.value.playing, isTrue);
+    expect(engine.plays, 2);
+    expect(engine.pauses, 1);
+  });
 }
 
 Future<void> pump() => Future<void>.delayed(const Duration(milliseconds: 10));

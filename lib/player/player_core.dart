@@ -627,6 +627,16 @@ class PlayerCore {
     await _engine.play();
   }
 
+  /// 播放/暂停切换。UI 统一走这里，避免用 build 时捕获的 `playing`
+  /// 决定动作——连点时两次都会读到同一个旧值，看起来像按钮失灵。
+  Future<void> togglePlayPause() async {
+    if (state.value.playing) {
+      await pause();
+    } else {
+      await play();
+    }
+  }
+
   Future<void> pause() async {
     // 中断期间用户主动按了暂停：结束事件不应把音乐又放出来。
     if (_inInterruption) _userPausedDuringInterruption = true;

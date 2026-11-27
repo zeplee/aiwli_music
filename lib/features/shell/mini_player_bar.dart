@@ -85,7 +85,7 @@ class MiniPlayerBar extends ConsumerWidget {
                   // 加上 Material 内边距导致底部溢出。
                   IconButton(
                     tooltip: s.playing ? '暂停' : '播放',
-                    onPressed: () => s.playing ? core.pause() : core.play(),
+                    onPressed: core.togglePlayPause,
                     icon: Icon(s.playing ? Icons.pause : Icons.play_arrow),
                     visualDensity: VisualDensity.compact,
                     constraints:
