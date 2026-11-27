@@ -19,6 +19,9 @@ class MprisCast implements MediaSessionCast {
   AudioServicePlatform? _platform;
 
   @override
+  bool get isReady => _ready;
+
+  @override
   Stream<CastCommand> get commands => _commands.stream;
 
   @override

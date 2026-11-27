@@ -224,7 +224,20 @@ class PlayerCore {
   void _bindCast() {
     final cast = _cast;
     if (cast == null) return;
-    cast.init();
+    // init() 是异步的：activate() + 两个配置调用都要走 platform channel。
+    // 构造函数不能 await，所以把 Future 存下来，完成后强制重推一次，
+    // 避免「首推在 _activated=false 时被丢弃、去重 key 却已写好」——
+    // 那会让这首歌整段生命周期通知栏都是空的（真机表现为有时候全黑）。
+    _castInit = cast
+        .init()
+        .whenComplete(() {
+          if (!_disposed) {
+            _lastCastKey = null;
+            _pushToCast();
+          }
+        })
+        // init 失败时媒体广播降级即可，不能让 dispose 里的 await 抛异常。
+        .catchError((Object _) {});
     _castSub = cast.commands.listen((cmd) {
       switch (cmd.type) {
         case CastCommandType.play:
@@ -249,6 +262,9 @@ class PlayerCore {
   /// 状态 → 系统媒体中心。只在"曲目变了"或播控变了时推，
   /// 避免每 200ms 的进度 tick 反复打扰系统（进度由系统侧按 speed 外推）。
   String? _lastCastKey;
+  Future<void>? _castInit;
+  bool _disposed = false;
+
   void _pushToCast() {
     final cast = _cast;
     if (cast == null) return;
@@ -264,6 +280,9 @@ class PlayerCore {
     final key = '${meta?.title}|${meta?.artist}|${meta?.album}|'
         '${meta?.artUri}|${s.playing}|${s.duration}';
     if (key == _lastCastKey) return;
+    // 只有 cast 真正就绪才记录 key；未就绪的推送会被 cast 静默丢弃，
+    // 若此时记账，init 完成前同一首歌的状态变化都会被去重挡掉。
+    if (!cast.isReady) return;
     _lastCastKey = key;
     AppLog.d('Cast',
         'push playing=${s.playing} title=${meta?.title ?? '(空)'}');
@@ -648,9 +667,11 @@ class PlayerCore {
   /// 引擎/Player 是进程级原生资源，且 core 为单例；若在此 dispose 引擎，
   /// 任何仍持有本 core 的调用都会抛 `[Player] has been disposed`。
   Future<void> dispose() async {
+    _disposed = true;
     await _engineSub?.cancel();
     await _focusSub?.cancel();
     state.removeListener(_pushToCast);
     await _castSub?.cancel();
+    await _castInit;
   }
 }

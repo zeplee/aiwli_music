@@ -20,6 +20,9 @@ class FmsCast implements MediaSessionCast {
   bool _activated = false;
 
   @override
+  bool get isReady => _activated;
+
+  @override
   Stream<CastCommand> get commands => _commands.stream;
 
   @override

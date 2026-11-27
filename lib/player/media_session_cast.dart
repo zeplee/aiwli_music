@@ -13,6 +13,10 @@ class CastCommand {
 /// 系统媒体广播抽象（ADR-003/ADR-014）。
 abstract interface class MediaSessionCast {
   Future<void> init();
+
+  /// init() 是否已经成功完成。未就绪时上层不应记录去重 key，
+  /// 否则「首推被丢弃 + key 已写」会让这首歌整段生命周期都不再推送。
+  bool get isReady;
   void updateNowPlaying(TrackMetadata meta);
   void updatePlayback({required bool playing, required Duration position, Duration? duration});
   void updateQueue(List<TrackMetadata> queue, {int? currentIndex});
@@ -23,6 +27,8 @@ abstract interface class MediaSessionCast {
 class NullCast implements MediaSessionCast {
   @override
   Future<void> init() async {}
+  @override
+  bool get isReady => true;
   @override
   void updateNowPlaying(TrackMetadata meta) {}
   @override
