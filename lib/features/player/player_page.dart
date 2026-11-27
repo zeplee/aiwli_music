@@ -74,7 +74,17 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
           ),
         );
 
-    return CallbackShortcuts(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      // 播放页背景铺满状态栏，状态栏必须透明 + 亮色图标，
+      // 否则 MIUI 会给状态栏加一层灰底，和内容渐变断开。
+      value: SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+      child: CallbackShortcuts(
       bindings: {
         // Space：播放/暂停
         const SingleActivator(LogicalKeyboardKey.space): () {
@@ -521,6 +531,7 @@ class _PlayerPageState extends ConsumerState<PlayerPage> {
             },
           ),
         ),
+      ),
       ),
     );
   }
