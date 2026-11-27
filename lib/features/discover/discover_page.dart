@@ -758,7 +758,7 @@ class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
             crossAxisCount: 2,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
-            childAspectRatio: 1.02,
+            childAspectRatio: 0.86,
           ),
           itemCount: _items!.length,
           itemBuilder: (context, i) =>
