@@ -45,17 +45,18 @@ class FmsCast implements MediaSessionCast {
       // cached-app freezer 冻结进程 → decoders 停摆 → 音频一卡一卡。
       // 默认是 false（为了省电），音乐播放器必须开。
       await _session.setBackgroundKeepAlive(true);
-      _activated = true;
-
+      // 先注册 action handler，再置 _activated=true。
+      // 否则存在「isReady 已为 true、但系统控件回调还没挂上」的窗口：
+      // 此时推送的 metadata 可能带着未初始化的通知一起丢失。
       _session.setActionHandler(
         onPlay: () => _emit(CastCommandType.play),
         onPause: () => _emit(CastCommandType.pause),
         onSkipToNext: () => _emit(CastCommandType.next),
         onSkipToPrevious: () => _emit(CastCommandType.previous),
-        onSeekTo: (pos) =>
-            _emit(CastCommandType.seek, position: pos),
+        onSeekTo: (pos) => _emit(CastCommandType.seek, position: pos),
         onStop: () => _emit(CastCommandType.pause),
       );
+      _activated = true;
     } catch (e) {
       // 会话不可用（如测试环境/无系统媒体中心的平台）：静默降级，
       // 播放功能本身不受影响。

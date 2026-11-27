@@ -5,9 +5,9 @@ import 'package:aiwli_music/features/discover/featured_playlists.dart';
 
 void main() {
   group('平台覆盖', () {
-    test('精选歌单支持 5 家平台（不再只有网易/酷我）', () {
+    test('精选歌单支持 6 家平台（不再只有网易/酷我）', () {
       expect(FeaturedPlaylists.supportedSources,
-          ['wy', 'kw', 'tx', 'kg', 'mg']);
+          ['wy', 'kw', 'tx', 'kg', 'mg', 'qs']);
       expect(PlaylistCatalog.supportedSources,
           FeaturedPlaylists.supportedSources);
     });

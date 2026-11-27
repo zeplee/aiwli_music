@@ -292,7 +292,9 @@ class PlayerCore {
     // 旧 key 里拼 s.title 会让切歌后 key 不变，于是直接 return，
     // 通知栏元数据永远停在上一首/空白（真机取证：android.title=null）。
     final meta = item?.metadata;
-    final key = '${meta?.title}|${meta?.artist}|${meta?.album}|'
+    // isReady 必须进 key：init 完成前后同一首歌的数据完全相同，
+    // 但 init 前推送会被 cast 丢弃；不把就绪态计入，补推会被去重挡掉。
+    final key = '${cast.isReady}|${meta?.title}|${meta?.artist}|${meta?.album}|'
         '${meta?.artUri}|${meta?.artBytes?.length}|'
         '${s.playing}|${s.duration}';
     if (key == _lastCastKey) return;

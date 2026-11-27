@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart' as crypto;
+
 import '../../sources/builtin/builtin_base.dart';
 import '../../sources/builtin/catalog_sdk.dart' show CatalogHit, SearchKind;
 
@@ -18,7 +20,7 @@ class PlaylistCatalog {
   PlaylistCatalog._();
 
   /// 支持分类浏览的平台（与内置榜单的 5 家一致）。
-  static const supportedSources = <String>['wy', 'kw', 'tx', 'kg', 'mg'];
+  static const supportedSources = <String>['wy', 'kw', 'tx', 'kg', 'mg', 'qs'];
 
   /// 每个平台可选分类（id → 展示名）。网易/咪咕只有一个分类，
   /// UI 上应隐藏分类切换而不是给一个空菜单。
@@ -41,6 +43,7 @@ class PlaylistCatalog {
       (id: '8', label: '飙升'),
     ],
     'mg': [(id: '15127315', label: '推荐')],
+    'qs': [(id: 'recommend', label: '推荐')],
   };
 
   static Future<List<CatalogHit>> featured({
@@ -58,6 +61,7 @@ class PlaylistCatalog {
         'tx' => await _tx(cat, limit),
         'wy' => await _wy(cat, limit),
         'mg' => await _mg(cat, limit),
+        'qs' => await _qs(cat, limit),
         _ => <CatalogHit>[],
       };
       final seen = <String>{};
@@ -198,6 +202,84 @@ class PlaylistCatalog {
       ));
     }
     return out.take(limit).toList();
+  }
+
+  // ——————————————— 汽水 ———————————————
+  static Future<List<CatalogHit>> _qs(String cat, int limit) async {
+    // 汽水的发现页是固定的一页推荐（无分页），body 恒为 {}，
+    // 签名头 x-ss-stub = md5('{}').toUpperCase()，是固定值，无需动态签名。
+    const params = {
+      'aid': '386088',
+      'app_name': 'luna_pc',
+      'region': 'cn',
+      'geo_region': 'cn',
+      'os_region': 'cn',
+      'version_name': '3.7.0',
+      'version_code': '3.7.0',
+      'channel': 'official',
+      'build_mode': 'master',
+      'ac': 'wifi',
+      'tz_name': 'Asia/Shanghai',
+      'device_platform': 'windows',
+      'device_type': 'Windows',
+      'os_version': 'Windows 10 Pro',
+    };
+    final query = params.entries
+        .map((e) =>
+            '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}')
+        .join('&');
+    final body = '{}';
+    final stub = crypto.md5.convert(utf8.encode(body)).toString().toUpperCase();
+    final raw = await BuiltinHttp.getRaw(
+      'https://api.qishui.com/luna/pc/discover?$query',
+      method: 'POST',
+      body: body,
+      headers: {
+        'User-Agent': 'LunaPC/3.7.0(official)',
+        'Accept': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
+        'x-luna-is-local-user': '0',
+        'x-ss-stub': stub,
+      },
+    );
+    final decoded = raw is String ? jsonDecode(raw) : raw;
+    if (decoded is! Map || decoded['status_code'] != 0) return const [];
+    final out = <CatalogHit>[];
+    final seen = <String>{};
+    void walk(Object? node) {
+      if (out.length >= limit) return;
+      if (node is List) {
+        for (final e in node) {
+          walk(e);
+          if (out.length >= limit) return;
+        }
+        return;
+      }
+      if (node is! Map) return;
+      if (node['playlist'] is Map) {
+        final item = node['playlist'] as Map;
+        final id = _text(item['id']);
+        if (id.isNotEmpty && seen.add(id)) {
+          out.add(_hit(
+            id: id,
+            title: _text(item['title']).isEmpty ? '汽水歌单' : _text(item['title']),
+            subtitle: (item['owner'] is Map)
+                ? _text((item['owner'] as Map)['nickname'])
+                : '',
+            picUrl: _firstText(item['url_cover'], item['cover']),
+            extra: _countLabel(item['count_tracks']),
+          ));
+          return;
+        }
+      }
+      for (final v in node.values) {
+        walk(v);
+        if (out.length >= limit) return;
+      }
+    }
+
+    walk(decoded['blocks']);
+    return out;
   }
 
   // ——————————————— 咪咕 ———————————————
