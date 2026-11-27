@@ -758,7 +758,7 @@ class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
             crossAxisCount: 2,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
-            childAspectRatio: 0.86,
+            childAspectRatio: 1.0,
           ),
           itemCount: _items!.length,
           itemBuilder: (context, i) =>
@@ -797,7 +797,8 @@ class _PlaylistTile extends StatelessWidget {
         child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
+          SizedBox(
+            height: 104,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(9),
               child: (hit.picUrl == null || hit.picUrl!.isEmpty)
