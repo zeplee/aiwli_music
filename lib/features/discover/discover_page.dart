@@ -38,23 +38,11 @@ class DiscoverPage extends ConsumerStatefulWidget {
 }
 
 class _DiscoverPageState extends ConsumerState<DiscoverPage> {
-  /// 发现页当前查看的音源（榜单由 lx 脚本提供时的源切换）。
-  String? _selectedSourceId;
-
   /// 榜单当前查看的平台（内置榜单，与脚本源选择独立）。
   String _boardSource = 'kw';
 
   /// 刷新计数器：递增即触发所有子块重新取数。
   int _refreshTick = 0;
-
-  String? _effectiveSourceId() {
-    final reg = ref.watch(sourceRegistryProvider);
-    if (_selectedSourceId != null &&
-        reg.installed.any((s) => s.id == _selectedSourceId)) {
-      return _selectedSourceId;
-    }
-    return reg.activeId;
-  }
 
   bool _canPlay() => ref
       .read(sourceRegistryProvider)
@@ -130,7 +118,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
     final canPlay =
         registry.enabledRuntimes.any((r) => r.actions.contains('musicUrl'));
     final enabledCount = registry.installed.where((s) => s.enabled).length;
-    final multiSource = enabledCount > 1;
 
     return GlassScaffold(
       background: _background(scheme),
@@ -165,15 +152,6 @@ class _DiscoverPageState extends ConsumerState<DiscoverPage> {
                 if (!canPlay) ...[
                   const SizedBox(height: 12),
                   _NoSourceNotice(enabledCount: enabledCount),
-                ],
-
-                // —— 音源切换（多源时）——
-                if (multiSource) ...[
-                  const SizedBox(height: 12),
-                  _SourceSelector(
-                    selectedId: _effectiveSourceId(),
-                    onSelect: (id) => setState(() => _selectedSourceId = id),
-                  ),
                 ],
 
                 // —— 每日推荐 ——
@@ -448,67 +426,6 @@ class _DailyRecommendCardState extends State<_DailyRecommendCard> {
 }
 
 /// 音源分段选择器（多脚本时的源切换）。
-class _SourceSelector extends ConsumerWidget {
-  const _SourceSelector({required this.selectedId, required this.onSelect});
-  final String? selectedId;
-  final ValueChanged<String> onSelect;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final scheme = Theme.of(context).colorScheme;
-    final installed = ref
-        .watch(sourceRegistryProvider)
-        .installed
-        .where((s) => s.enabled)
-        .toList();
-    if (installed.length < 2) return const SizedBox.shrink();
-
-    // 高度 >= 48：胶囊自身内边距让它只有 31dp 高，外层再压缩就难点中。
-    return SizedBox(
-      height: 48,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: installed.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final s = installed[i];
-          final active = s.id == selectedId;
-          return GlassTap(
-            borderRadius: 20,
-            onTap: () => onSelect(s.id),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-              decoration: BoxDecoration(
-                color: active
-                    ? scheme.secondaryContainer
-                    : scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: active
-                      ? scheme.secondary.withValues(alpha: 0.5)
-                      : Colors.transparent,
-                ),
-              ),
-              child: Text(
-                s.name,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                  color: active
-                      ? scheme.onSecondaryContainer
-                      : scheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-/// 榜单平台切换（内置五平台）。
 class _BuiltinBoardRow extends StatelessWidget {
   const _BuiltinBoardRow({required this.selectedSource, required this.onSelect});
   final String selectedSource;
