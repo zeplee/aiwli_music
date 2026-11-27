@@ -1,9 +1,9 @@
 import 'quality.dart';
 
-/// 音质从低到高。降级链按此顺序反向尝试。
+/// 音质从低到高。降级链先沿此序列反向找可用档，再正向找可用档。
 ///
 /// 对齐参考实现（CyShineMusic `kQualityRank` + `musicSourceQualityFallbacks`）：
-/// 请求音质不被某源支持时，不是硬失败，而是沿这个序列降到源支持的最近档位。
+/// 请求音质不被某源支持时，不是硬失败，而是尝试源支持的其他档位。
 const List<Quality> kQualityRank = [
   Quality.standard,
   Quality.high,
@@ -55,23 +55,29 @@ extension QualityCode on Quality {
   }
 }
 
-/// 生成降级链：从请求音质开始，按 kQualityRank 向上升级到源支持的档位。
+/// 生成「能播优先」降级链：先请求档，再向下找可用档（从高到低），
+/// 最后向上找可用档（从低到高），结果去重。
 ///
-/// 语义与参考实现一致：**只向上找**（请求 128k 而源只有 320k，就用 320k；
-/// 请求无损而源只有 128k，则不在本链内——那是"源不支持"而非"可降级"）。
-/// 这样能避免"请求无损 → 源不支持 → 硬等超时 → 换源"的无效等待。
+/// **低音质总比失败好**：请求无损/Hi-Res 而脚本只声明 128k 时，仍降到
+/// 128k 让用户听到声音；请求 128k 而源只有 320k 时仍能升到 320k。
+/// 避免"请求无损 → 源不支持 → 硬等超时 → 换源"的无效等待。
 List<Quality> qualityFallbacks({
   required Quality requested,
   required Iterable<Quality> sourceQualities,
 }) {
   final supported = sourceQualities.toSet();
   final start = kQualityRank.indexOf(requested);
-  if (start < 0) return [requested];
-  return List<Quality>.unmodifiable([
-    requested,
-    for (var i = start + 1; i < kQualityRank.length; i++)
-      if (supported.contains(kQualityRank[i])) kQualityRank[i],
-  ]);
+  if (start < 0) return List<Quality>.unmodifiable([requested]);
+  final chain = <Quality>{requested};
+  for (var i = start - 1; i >= 0; i--) {
+    final quality = kQualityRank[i];
+    if (supported.contains(quality)) chain.add(quality);
+  }
+  for (var i = start + 1; i < kQualityRank.length; i++) {
+    final quality = kQualityRank[i];
+    if (supported.contains(quality)) chain.add(quality);
+  }
+  return List<Quality>.unmodifiable(chain);
 }
 
 /// 在源支持列表里挑最接近请求的音质（优先精确命中，否则就近）。

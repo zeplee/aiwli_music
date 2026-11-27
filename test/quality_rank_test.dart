@@ -3,12 +3,12 @@ import 'package:aiwli_music/core/models/quality.dart';
 import 'package:aiwli_music/core/models/quality_rank.dart';
 
 void main() {
-  test('降级链：请求无损，源只支持 128k → 链内只有无损（不算可降级）', () {
+  test('降级链：请求无损，源只支持 128k → 向下降到 128k', () {
     final chain = qualityFallbacks(
       requested: Quality.lossless,
       sourceQualities: {Quality.standard},
     );
-    expect(chain, [Quality.lossless]);
+    expect(chain, [Quality.lossless, Quality.standard]);
   });
 
   test('降级链：请求 128k，源支持 320k/无损 → 依次向上', () {
@@ -19,12 +19,12 @@ void main() {
     expect(chain, [Quality.standard, Quality.high, Quality.lossless]);
   });
 
-  test('降级链：请求 320k，源只支持 128k → 链内只有 320k', () {
+  test('降级链：请求 320k，源只支持 128k → 向下降到 128k', () {
     final chain = qualityFallbacks(
       requested: Quality.high,
       sourceQualities: {Quality.standard},
     );
-    expect(chain, [Quality.high]);
+    expect(chain, [Quality.high, Quality.standard]);
   });
 
   test('降级链：源未声明音质 → 只有请求音质本身', () {
@@ -33,6 +33,40 @@ void main() {
       sourceQualities: {},
     );
     expect(chain, [Quality.high]);
+  });
+
+  test('降级链：请求 Hi-Res，源只有 128k → 向下降到 128k', () {
+    final chain = qualityFallbacks(
+      requested: Quality.hires,
+      sourceQualities: {Quality.standard},
+    );
+    expect(chain, [Quality.hires, Quality.standard]);
+  });
+
+  test('降级链：请求 128k，源只有 Hi-Res → 向上升到 Hi-Res', () {
+    final chain = qualityFallbacks(
+      requested: Quality.standard,
+      sourceQualities: {Quality.hires},
+    );
+    expect(chain, [Quality.standard, Quality.hires]);
+  });
+
+  test('降级链：先向下从高到低，再向上从低到高，且结果去重', () {
+    final chain = qualityFallbacks(
+      requested: Quality.lossless,
+      sourceQualities: [
+        Quality.standard,
+        Quality.high,
+        Quality.hires,
+        Quality.high,
+      ],
+    );
+    expect(chain, [
+      Quality.lossless,
+      Quality.high,
+      Quality.standard,
+      Quality.hires,
+    ]);
   });
 
   test('chooseQuality 优先精确命中', () {

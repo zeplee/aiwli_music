@@ -114,16 +114,13 @@ class PlayerCore {
   int _fallbackCount = 0;
   bool _fallbackInFlight = false;
 
-  /// 本曲已完成过换源回退。
+  /// 本曲换源时「已被替换掉的旧地址」集合。
   ///
-  /// 之前用 `_activeResolved = null` 表达这件事，但那样会让
-  /// `_onEngineSnapshot` 的**陈旧事件守卫整体失效**：
-  ///   守卫条件是 `_activeResolved != null && cur != url`
-  /// 一旦为 null，旧 URL 迟到的 `error` / `playing=false` 全被放行，
-  /// 于是刚 `playing=true` 的新曲立刻被打回 false ——
-  /// 表现就是「播完一首后卡住不动」（真机日志实测：
-  ///  push playing=true → 立刻 push playing=false，反复循环）。
-  bool _fallbackDone = false;
+  /// 之前用单个 `_fallbackDone` 布尔：换源成功后把**同一首歌之后所有**
+  /// 真实错误都吞掉（界面显示正在播放却没声音、无红条、无日志），
+  /// 而且还让换源条件永久失效。现在只按错误文本归属判断：
+  /// 只有明确来自这些旧 URL 的迟到 error 才忽略。
+  final Set<String> _replacedUrls = <String>{};
   final Future<void> Function(PlayerItem item)? _prefetcher;
   StreamSubscription<FocusEvent>? _focusSub;
   bool _wasPlayingBeforeInterruption = false;
@@ -380,10 +377,17 @@ class PlayerCore {
     if (snap.processing == EngineProcessing.error &&
         snap.error != null &&
         _activeResolved != null &&
-        !_fallbackInFlight &&
-        !_fallbackDone) {
-      final resolved = _activeResolved!;
-      if (resolved.sourceId != 'local' && resolved.sourceId != 'url') {
+        !_fallbackInFlight) {
+          final resolved = _activeResolved!;
+    final snapErr = snap.error?.toString();
+    final failedMatch =
+        snapErr == null ? null : _failedUrlPattern.firstMatch(snapErr);
+    final failedUrl = failedMatch?.group(1);
+    final fromReplacedUrl = failedUrl != null &&
+        _replacedUrls.any((old) => _sameResource(failedUrl, old));
+    if (!fromReplacedUrl &&
+        resolved.sourceId != 'local' &&
+        resolved.sourceId != 'url') {
         unawaited(_fallbackOnEngineError(snap));
         state.value = state.value.copyWith(
           processing: EngineProcessing.loading,
@@ -392,13 +396,15 @@ class PlayerCore {
         return;
       }
     }
-    // 区分「真失败」与「换源已救回」：
-    // 换源成功后 _fallbackDone=true，引擎仍可能上报那条死链的残留
-    // error。若直接透传给 state，UI 会再弹一次红条——用户看到的就是
-    // "明明已经在播了，还挂着红条"，很干扰观感。
-    final swallowedByFallback = _fallbackDone && snap.error != null;
+    // 只吞「已被换源替换掉的旧地址」的迟到 error。
+    // 新地址随后真的失败时必须透传，否则用户看到「播放中」却没声音。
+    final errText = snap.error?.toString();
+    final m = errText == null ? null : _failedUrlPattern.firstMatch(errText);
+    final failedUrl = m?.group(1);
+    final swallowedByFallback = failedUrl != null &&
+        _replacedUrls.any((old) => _sameResource(failedUrl, old));
     if (swallowedByFallback) {
-      AppLog.d('Error', '换源已成功，忽略残留 error: ${snap.error}');
+      AppLog.d('Error', '换源已成功，忽略旧链残留 error: $errText');
     }
     state.value = state.value.copyWith(
       processing: snap.processing,
@@ -444,9 +450,9 @@ class PlayerCore {
     final item = _queue[index];
     final gen = ++_loadGeneration;
     // 新曲：重置回退状态
-    _fallbackDone = false;
     _fallbackCount = 0;
     _fallbackInFlight = false;
+    _replacedUrls.clear();
     state.value = state.value.copyWith(
       processing: EngineProcessing.loading,
       playing: false,
@@ -569,10 +575,10 @@ class PlayerCore {
       }
       await _engine.play();
       _expectCompletion = true;
-      // 回退成功：**保留** _activeResolved（陈旧事件守卫必须继续有效），
-      // 只用 _fallbackDone 标记"本曲已回退过"，防止旧 URL 的迟到错误
-      // 再触发一轮无谓回退。
-      _fallbackDone = true;
+      // 回退成功：保留 _activeResolved（陈旧事件守卫必须继续有效），
+      // 把旧地址记进集合，只忽略它的迟到 error。新地址后续真失败
+      // 会照常触发下一轮换源或红条，不再被布尔标志永久吞掉。
+      _replacedUrls.add(resolved.url);
       _fallbackInFlight = false;
       state.value = state.value.copyWith(
         processing: EngineProcessing.ready,

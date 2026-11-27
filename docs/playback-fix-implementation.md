@@ -50,7 +50,9 @@
 | P0-7 | 冷启动脚本 `waitInited()` 失败被空 catch 吞掉 | `lib/player/playback_resolver.dart:548-553` | 首播失败、过会儿再点又能播 |
 | P0-8 | 并发胜出后对所有输家 `cancelPending()` 触发 JS 引擎重建 | `lib/player/playback_resolver.dart:511-513`、`lib/sources/runtime/runtime_host.dart:474-479` | 快速连点下一首时撞上重建窗口，延迟 5–8s 或取不到链 |
 | P1 | `play()` 丢弃焦点获取结果，且先写 `playing:true` 再调引擎 | `lib/player/player_core.dart:557-562` | UI 显示播放中但无声 |
-| P1 | `pubspec.yaml:25` 声明 `audio_session ^0.2.4`，`pubspec.lock` 实际 `0.1.3` | 两文件 | 版本不一致，行为不可预期 |
+
+注：初版诊断曾怀疑 `pubspec.lock` 中 `audio_session` 为 0.1.3，复核后确认
+`0.1.3` 属于相邻包，`audio_session` 实际锁定 `0.2.4`，与声明一致，无需改动。
 
 已排除：`setQueue` 后未 play（`player_core.dart:397 → 456` 会自动 play）；
 PlayerCore 被 Riverpod 重建（已单例）；media_kit 未初始化（有守卫）。
@@ -122,7 +124,7 @@ error=null」，未测「成功后再次失败」；评论零测试；`transport
 
 | 项 | 改法 | 文件 |
 |---|---|---|
-| A1 焦点恢复 | `AudioFocusPolicy` 正确产生 `interruptionEnd` / `duckEnd`；`PlayerCore` 用它恢复播放并复位 `_wasPlayingBeforeInterruption`。`audio_session` 锁版本对齐声明 | `lib/player/audio_focus_policy.dart`、`lib/player/player_core.dart`、`pubspec.lock` |
+| A1 焦点恢复 | `AudioFocusPolicy` 正确产生 `interruptionEnd` / `duckEnd`；`PlayerCore` 用它恢复播放并复位 `_wasPlayingBeforeInterruption`。`audio_session` 锁版本经复核无误，不改 | `lib/player/audio_focus_policy.dart`、`lib/player/player_core.dart` |
 | A2 cast 初始化 | `init()` 改为可 await 并等待完成；`_lastCastKey` **只在推送成功后写**；激活完成后强制重推一次当前曲 | `lib/player/player_core.dart`、`lib/player/cast/fms_cast.dart`、`lib/player/media_session_cast.dart` |
 | A3 封面 | `artBytes` 落成本地缓存文件后转 `file://` URI 传给 `artworkUri`（插件 `MediaMetadata` 只收 URI）；补传 `album`；网络封面失败时提供兜底（不引新包，复用现有占位图资源或本地文件） | `lib/player/player_core.dart`、`lib/player/models.dart`、`lib/player/cast/fms_cast.dart` |
 | A4 取链稳定性 | `_fallbackDone` 布尔改成「本次错误是否属于已救回的旧 URL」的归属判断；音质降级方向修正（允许向低档找）；缓存命中保留真实 `winnerId`；`network-timeout` 降到 15s；非致命白名单改为「先判致命、再判 benign」；冷启动 `waitInited` 失败写日志并允许重试；`cancelPending` 不波及后续请求 | `lib/player/player_core.dart`、`lib/player/playback_resolver.dart`、`lib/core/models/quality_rank.dart`、`lib/player/media_kit_engine.dart` |

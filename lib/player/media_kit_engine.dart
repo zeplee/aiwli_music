@@ -71,8 +71,11 @@ class MediaKitEngine implements AudioEngine {
       'no extension',
       'unrecognized',
     ];
+    // 打开失败优先于格式提示：例如 "Failed to open ... unknown format"
+    // 必须换源；只有不含打开失败词的纯 benign 文本才继续按非致命处理。
+    if (fatalMarkers.any(lower.contains)) return true;
     if (benignMarkers.any(lower.contains)) return false;
-    return fatalMarkers.any(lower.contains);
+    return false;
   }
 
   static bool _initialized = false;
@@ -219,13 +222,14 @@ class MediaKitEngine implements AudioEngine {
       // 缓冲不足时继续读，不要中途放弃（弱网容忍）
       await platform.setProperty('cache-pause-initial', 'yes');
       await platform.setProperty('cache-pause-wait', '3');
-      // 网络超时放宽：源站偶尔几秒不响应不应判死
-      await platform.setProperty('network-timeout', '60');
+      // 网络超时不宜等太久：15 秒内没响应就尽快进入换源回退
+      await platform.setProperty('network-timeout', '15');
       // 音频流按需降档，避免瞬间断流
       await platform.setProperty('demuxer-max-bytes', '32MiB');
       await platform.setProperty('demuxer-max-back-bytes', '8MiB');
-    } catch (_) {
-      // 老版本 mpv 没有这些属性：忽略，播放本身不受影响
+    } catch (e) {
+      // 老版本 mpv 没有这些属性：记录后继续，播放本身不受影响
+      AppLog.w('MediaKit', '网络缓存参数不受支持: $e');
     }
   }
 
