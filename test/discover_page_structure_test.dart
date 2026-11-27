@@ -55,14 +55,14 @@ void main() {
     expect(find.text('按平台分类浏览'), findsOneWidget);
   });
 
-  testWidgets('精选歌单只列真实可用的两个平台', (tester) async {
+  testWidgets('精选歌单列 5 家可用平台', (tester) async {
     await tester.pumpWidget(_wrap());
     await tester.pump(const Duration(milliseconds: 300));
 
-    // CatalogSdk 只有网易 + 酷我可用的歌单接口；
-    // 若这里出现 QQ/酷狗/咪咕，说明又回到「点进去永远空态」的老问题。
+    // PlaylistCatalog 为 5 家都提供了无需签名的公开浏览接口，
+    // 不再受关键词搜索能力限制。
     final supported = FeaturedPlaylists.supportedSources;
-    expect(supported, equals(['wy', 'kw']));
+    expect(supported, equals(['wy', 'kw', 'tx', 'kg', 'mg']));
   });
 
   testWidgets('无脚本时给出说明而不是空白', (tester) async {

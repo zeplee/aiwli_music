@@ -1,5 +1,7 @@
-import 'package:aiwli_music/sources/builtin/catalog_sdk.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../sources/builtin/catalog_sdk.dart' show CatalogHit;
+import 'playlist_catalog.dart';
 
 /// 精选歌单的取数封装。
 ///
@@ -13,17 +15,20 @@ class FeaturedPlaylists {
   /// 测试可注入的取数实现。
   static Future<List<CatalogHit>> Function(String source)? overrideFetcher;
 
-  /// CatalogSdk 实测只有网易和酷我提供可用的歌单分类接口，
-  /// 另外三家（tx/kg/mg）的 playlist 搜索恒为空，所以不列出来误导用户。
-  static const supportedSources = <String>['wy', 'kw'];
+  /// 五家平台都有无需签名的公开「精选歌单浏览」接口
+  /// （见 PlaylistCatalog），不再用关键词搜索冒充分类浏览。
+  static const supportedSources = PlaylistCatalog.supportedSources;
 
-  static Future<List<CatalogHit>> fetch({required String source}) {
+  static Future<List<CatalogHit>> fetch({
+    required String source,
+    String categoryId = '',
+  }) {
     final o = overrideFetcher;
     if (o != null) return o(source);
-    return CatalogSdk.search(
-      kind: SearchKind.playlist,
-      keyword: '热门',
-      source: supportedSources.contains(source) ? source : 'wy',
+    final s = supportedSources.contains(source) ? source : 'wy';
+    return PlaylistCatalog.featured(
+      source: s,
+      categoryId: categoryId,
       limit: 12,
     );
   }

@@ -4,10 +4,13 @@ import 'package:liquid_glass_widgets/liquid_glass_widgets.dart';
 
 import '../../../app_providers.dart';
 import '../../core/models/music.dart';
+import '../../core/ui/cover_source.dart';
 import '../../sources/builtin/board_songs.dart';
 import '../../sources/builtin/builtin_boards.dart';
 import '../../sources/builtin/catalog_sdk.dart';
 import 'featured_playlists.dart';
+import 'platform_dropdown.dart';
+import 'playlist_catalog.dart';
 import 'glass_tap.dart';
 import 'online_playlist_page.dart';
 import 'daily_recommend.dart';
@@ -433,47 +436,13 @@ class _BuiltinBoardRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final ids = BuiltinBoards.catalog.keys.toList();
-    return SizedBox(
-      height: 44,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: ids.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final id = ids[i];
-          final active = id == selectedSource;
-          return GlassTap(
-            borderRadius: 18,
-            onTap: () => onSelect(id),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: active
-                    ? scheme.primary.withValues(alpha: 0.16)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: active
-                      ? scheme.primary.withValues(alpha: 0.4)
-                      : scheme.outlineVariant.withValues(alpha: 0.5),
-                ),
-              ),
-              child: Center(
-                child: Text(
-                  BuiltinBoards.labels[id] ?? id,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: active ? FontWeight.bold : FontWeight.normal,
-                    color: active ? scheme.primary : scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: PlatformDropdown(
+        selected: selectedSource,
+        platforms: BuiltinBoards.catalog.keys.toList(),
+        onSelected: onSelect,
+        hint: '选择榜单平台',
       ),
     );
   }
@@ -657,12 +626,13 @@ class _FeaturedPlaylists extends ConsumerStatefulWidget {
 }
 
 class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
-  /// 只有网易和酷我提供可用的歌单分类接口（CatalogSdk 实测结论），
-  /// 所以这里不能跟着五平台榜单走，否则另外三家点进去永远是空态。
+  /// 五家平台都有无需签名的公开「精选歌单浏览」接口
+  /// （见 PlaylistCatalog），不再受关键词搜索能力限制。
   static const _supported = FeaturedPlaylists.supportedSources;
 
   late String _source =
       _supported.contains(widget.initialSource) ? widget.initialSource : 'wy';
+  late String _category = PlaylistCatalog.categories[_source]!.first.id;
   List<CatalogHit>? _items;
   bool _loading = true;
 
@@ -677,7 +647,10 @@ class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
       _loading = true;
       _items = null;
     });
-    final list = await FeaturedPlaylists.fetch(source: _source);
+    final list = await FeaturedPlaylists.fetch(
+      source: _source,
+      categoryId: _category,
+    );
     if (!mounted) return;
     setState(() {
       _items = list;
@@ -687,7 +660,16 @@ class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
 
   void _select(String id) {
     if (id == _source) return;
-    setState(() => _source = id);
+    setState(() {
+      _source = id;
+      _category = PlaylistCatalog.categories[id]!.first.id;
+    });
+    _load();
+  }
+
+  void _selectCategory(String id) {
+    if (id == _category) return;
+    setState(() => _category = id);
     _load();
   }
 
@@ -696,49 +678,56 @@ class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
     final scheme = Theme.of(context).colorScheme;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      SizedBox(
-        height: 44,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: _supported.length,
-          separatorBuilder: (_, _) => const SizedBox(width: 8),
-          itemBuilder: (context, i) {
-            final id = _supported[i];
-            final active = id == _source;
-            return GlassTap(
-              borderRadius: 18,
-              onTap: () => _select(id),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                decoration: BoxDecoration(
-                  color: active
-                      ? scheme.primary.withValues(alpha: 0.16)
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
+      PlatformDropdown(
+        selected: _source,
+        platforms: _supported,
+        onSelected: _select,
+        hint: '选择歌单平台',
+      ),
+      if (PlaylistCatalog.categories[_source]!.length > 1) ...[
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 34,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: PlaylistCatalog.categories[_source]!.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final c = PlaylistCatalog.categories[_source]![i];
+              final active = c.id == _category;
+              return GlassTap(
+                borderRadius: 16,
+                onTap: () => _selectCategory(c.id),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                  decoration: BoxDecoration(
                     color: active
-                        ? scheme.primary.withValues(alpha: 0.4)
-                        : scheme.outlineVariant.withValues(alpha: 0.5),
+                        ? scheme.primary.withValues(alpha: 0.16)
+                        : scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: active
+                          ? scheme.primary.withValues(alpha: 0.4)
+                          : Colors.transparent,
+                    ),
                   ),
-                ),
-                child: Center(
                   child: Text(
-                    BuiltinBoards.labels[id] ?? id,
+                    c.label,
                     style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight:
-                          active ? FontWeight.bold : FontWeight.normal,
-                      color: active ? scheme.primary : scheme.onSurfaceVariant,
+                      fontSize: 12,
+                      fontWeight: active ? FontWeight.bold : FontWeight.normal,
+                      color: active
+                          ? scheme.primary
+                          : scheme.onSurfaceVariant,
                     ),
                   ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
-      ),
+      ],
       const SizedBox(height: 10),
       if (_loading)
         const Padding(
@@ -769,7 +758,7 @@ class _FeaturedPlaylistsState extends ConsumerState<_FeaturedPlaylists> {
             crossAxisCount: 2,
             mainAxisSpacing: 10,
             crossAxisSpacing: 10,
-            childAspectRatio: 1.42,
+            childAspectRatio: 1.02,
           ),
           itemCount: _items!.length,
           itemBuilder: (context, i) =>
@@ -818,7 +807,9 @@ class _PlaylistTile extends StatelessWidget {
                           size: 22, color: scheme.onSurfaceVariant),
                     )
                   : Image.network(
-                      hit.picUrl!,
+                      CoverSource.normalize(hit.picUrl, size: 300) ??
+                          hit.picUrl!,
+                      headers: CoverSource.headers(hit.picUrl),
                       fit: BoxFit.cover,
                       width: double.infinity,
                       errorBuilder: (_, _, _) => Container(
@@ -831,10 +822,11 @@ class _PlaylistTile extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(hit.title,
-              maxLines: 1,
+              maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                  fontSize: 12.5, fontWeight: FontWeight.w600)),
+                  fontSize: 12.5, fontWeight: FontWeight.w600,
+                  height: 1.25)),
           if (hit.subtitle.isNotEmpty)
             Text(hit.subtitle,
                 maxLines: 1,
