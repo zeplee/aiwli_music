@@ -1,6 +1,7 @@
 import '../models/quality.dart';
 import '../storage/settings_store.dart';
 import 'safe_notifier.dart';
+import 'settings_prefs.dart';
 
 /// 应用设置（音质档位 + 均衡器），JSON 持久化到 settings.json。
 class AppSettings extends SafeNotifier {
@@ -42,6 +43,9 @@ class AppSettings extends SafeNotifier {
   /// 用户想固定昼夜时在设置里改。
   String themeMode = 'system';
 
+  /// 搜索与下载偏好（集中校验 + 导入导出，见 SettingsPrefs）。
+  SettingsPrefs prefs = const SettingsPrefs();
+
   /// 该档位对应的主歌词字号。
   double get lyricFontSize => switch (lyricSizeLevel) {
         1 => 15,
@@ -78,6 +82,7 @@ class AppSettings extends SafeNotifier {
     if (g != null && g.length == eqBandHz.length) {
       eqGains = g.map((e) => (e as num).toDouble()).toList();
     }
+    prefs = SettingsPrefs.fromMap(m);
     notifyListeners();
   }
 
@@ -97,6 +102,7 @@ class AppSettings extends SafeNotifier {
         'sleepTimerMinutes': sleepTimerMinutes,
         'songSort': songSort,
         'songSortAscending': songSortAscending,
+        ...prefs.toJson(),
       });
 
   /// 设置主题模式（system / light / dark），立即生效并落盘。
@@ -145,6 +151,19 @@ class AppSettings extends SafeNotifier {
 
   Future<void> setSleepTimerMinutes(int v) async {
     sleepTimerMinutes = v;
+    notifyListeners();
+    await _flush();
+  }
+
+  /// 更新搜索与下载偏好，立即生效并原子落盘。
+  Future<void> setPrefs(SettingsPrefs p) async {
+    // 至少保留 1 个搜索源，且默认平台必须在已启用集合内。
+    final enabled = {...p.enabledSearchSources};
+    if (enabled.isEmpty) enabled.add(p.defaultSearchSource);
+    if (!enabled.contains(p.defaultSearchSource)) {
+      enabled.add(p.defaultSearchSource);
+    }
+    prefs = p.copyWith(enabledSearchSources: enabled);
     notifyListeners();
     await _flush();
   }

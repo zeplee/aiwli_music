@@ -5,6 +5,7 @@ import '../../app_providers.dart';
 import '../downloads/downloads_page.dart';
 import '../library/library_page.dart';
 import 'webdav_page.dart';
+import 'settings_prefs_page.dart';
 import 'source_manage_page.dart';
 
 /// 我的：入口列表（下载 / 音源管理 / WebDAV 同步）+ 关于。
@@ -97,6 +98,14 @@ class MinePage extends ConsumerWidget {
           }),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _pickThemeMode(context, ref),
+        ),
+        ListTile(
+          leading: const Icon(Icons.tune_outlined),
+          title: const Text('搜索与下载偏好'),
+          subtitle: const Text('默认平台 / 搜索源 / 下载音质与命名'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const SettingsPrefsPage())),
         ),
         ListTile(
           leading: const Icon(Icons.cloud_sync_outlined),
